@@ -1,8 +1,7 @@
--- Tween Walk Hybrid (Safe + Physics Lock)
--- ป้องกันตัวละครหลุดร่างโดยใช้ HRP.Anchored และ TweenService ชั่วคราว
+-- Hybrid MoveTo + Tween Boost
+-- ใช้ Humanoid:MoveTo() ปกติ แต่แอบใส่ Tween เพิ่มความเร็วให้ RootPart วิ่งล้ำเล็กน้อย เพื่อเร่งความเร็วโดยไม่โดนตรวจจับ
 
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
 local TweenService = game:GetService("TweenService")
 local CollectionService = game:GetService("CollectionService")
@@ -35,18 +34,24 @@ local function FindNearestReadyATM()
     return nearestATM
 end
 
-local function SafeTweenTo(position, speed)
-    local adjustedY = math.max(position.Y, Workspace.FallenPartsDestroyHeight + 5) + 3
-    local goal = Vector3.new(position.X, adjustedY, position.Z)
-    local distance = (rootPart.Position - goal).Magnitude
-    local duration = distance / speed
-    if duration < 0.2 then duration = 0.2 end
+local function BoostedMoveTo(position)
+    local moveDone = false
+    humanoid:MoveTo(position)
 
-    rootPart.Anchored = true -- 🔒 ล็อคตำแหน่งก่อน Tween เพื่อป้องกันฟิสิกส์หลุด
-    local tween = TweenService:Create(rootPart, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Position = goal})
+    local conn = humanoid.MoveToFinished:Connect(function()
+        moveDone = true
+    end)
+
+    local tween = TweenService:Create(rootPart, TweenInfo.new(0.5, Enum.EasingStyle.Linear), {Position = position})
     tween:Play()
-    tween.Completed:Wait()
-    rootPart.Anchored = false -- 🔓 คืนค่าหลังจบ Tween
+
+    local timeout = 4
+    local start = os.clock()
+    while not moveDone and os.clock() - start < timeout do
+        task.wait(0.05)
+    end
+
+    conn:Disconnect()
 end
 
 local function WalkToATM(atm)
@@ -64,24 +69,26 @@ local function WalkToATM(atm)
     })
 
     path:ComputeAsync(rootPart.Position, targetPos)
-
-    if path.Status == Enum.PathStatus.Success then
-        print("[TweenWalk] เดินไป ATM →", atm:GetFullName())
-        for _, wp in ipairs(path:GetWaypoints()) do
-            if not IsATMReady(currentATM) or not humanoid.Parent then
-                moving = false
-                return
-            end
-            SafeTweenTo(wp.Position, 35) -- ช้าลงอีกนิดเพื่อเนียนกว่า
-        end
-        print("[TweenWalk] ถึง ATM แล้ว")
-        local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
-        if prompt then
-            print("[Prompt] พร้อมใช้งาน")
-        end
-    else
-        warn("[TweenWalk] Path ล้มเหลว:", path.Status.Name)
+    if path.Status ~= Enum.PathStatus.Success then
+        warn("[MoveTween] Path ล้มเหลว:", path.Status.Name)
+        moving = false
+        return
     end
+
+    for _, wp in ipairs(path:GetWaypoints()) do
+        if not IsATMReady(currentATM) or not humanoid.Parent then
+            moving = false
+            return
+        end
+        BoostedMoveTo(wp.Position)
+    end
+
+    print("[MoveTween] ถึง ATM แล้ว")
+    local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        print("[Prompt] พร้อมใช้งาน")
+    end
+
     moving = false
 end
 
@@ -89,7 +96,7 @@ while true do
     if not moving and humanoid.Parent then
         local atm = FindNearestReadyATM()
         if atm then WalkToATM(atm)
-        else warn("[ATM] ไม่มีตู้ที่พร้อมใช้งาน") end
+        else warn("[ATM] ไม่มี ATM พร้อมใช้งาน") end
     elseif not humanoid.Parent then
         warn("[ATM] ตัวละครตาย หยุดสคริปต์")
         break
