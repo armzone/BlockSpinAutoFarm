@@ -1,4 +1,6 @@
-print("AutoFarm Loaded ✅")
+-- LocalScript: AutoFarmATM (StarterPlayerScripts)
+-- ✅ ปรับปรุงใหม่: รองรับการตาย/รีเซ็ตตัวละคร
+-- กลับไปใช้แบบเดินไปยังตู้แรกที่พร้อม และเปลี่ยนเป้าหมายหากตู้ถูกใช้ไปก่อนถึง
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -27,8 +29,6 @@ local function BindCharacter()
         humanoid.WalkSpeed = speed
     end)
 end
-end
-
 BindCharacter()
 
 -- ฟังชันเมื่อรีเซ็ต/ตาย
