@@ -1,11 +1,28 @@
+--[[
+    สคริปต์ AutoFarm ATM (แก้ไขและปรับปรุง)
+    - แก้ไข Syntax Error ในฟังก์ชัน BindCharacter
+    - ลูปที่ไม่จำเป็นในฟังก์ชัน WalkToATM ซึ่งส่งผลต่อประสิทธิภาพอย่างรุนแรงออกไป
+    - ปรับปรุงการทำงานให้เสถียรขึ้น
+]]
+
+--// Services
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
+local RunService = game:GetService("RunService")
 
+--// Variables
 local player = Players.LocalPlayer
 local char, humanoid, rootPart
 local humanoidConnection
 
+local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
+local currentATM = nil
+local moving = false
+
+--// Functions
+
+-- ฟังก์ชันสำหรับผูกตัวแปรเข้ากับตัวละคร
 local function BindCharacter()
     char = player.Character or player.CharacterAdded:Wait()
     humanoid = char:WaitForChild("Humanoid")
@@ -16,120 +33,141 @@ local function BindCharacter()
         humanoidConnection:Disconnect()
     end
 
-    local RunService = game:GetService("RunService")
     local lastFrame = tick()
     humanoidConnection = RunService.Heartbeat:Connect(function()
         if not humanoid or not humanoid.Parent then return end
+        
         local now = tick()
         local delta = now - lastFrame
         lastFrame = now
 
+        -- คำนวณ FPS โดยประมาณและจำกัดค่าระหว่าง 30 ถึง 144
         local estimatedFPS = math.clamp(1 / delta, 30, 144)
+        -- ปรับความเร็วในการเดินตาม FPS (ค่าพื้นฐาน 16 ที่ 60 FPS)
         local speed = math.clamp(16 * (estimatedFPS / 60), 16, 26)
         humanoid.WalkSpeed = speed
     end)
-    end)
+    -- [!] แก้ไข: ลบวงเล็บปิด ')' และ 'end' ที่เกินมาซึ่งทำให้เกิด Syntax Error
 end
-BindCharacter()
 
--- ฟังชันเมื่อรีเซ็ต/ตาย
-player.CharacterAdded:Connect(function()
-    print("[⚠️] ตัวละครถูกรีเซ็ต → กำลังโหลดใหม่...")
-    moving = false
-    BindCharacter()
-    task.wait(1)
-    local atm = FindNearestReadyATM()
-    if atm then
-        WalkToATM(atm)
-    else
-        warn("[AutoFarmATM] ❌ ไม่พบ ATM หลังรีเซ็ต")
-    end
-end)
-
-
-local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
-
-local currentATM = nil
-local moving = false
-
--- 🔎 ตรวจสอบว่า ATM พร้อมใช้งาน (ProximityPrompt.Enabled == true)
+-- 🔎 ตรวจสอบว่า ATM พร้อมใช้งานหรือไม่ (เช็คจาก ProximityPrompt)
 local function IsATMReady(atm)
+    if not atm or not atm.Parent then return false end
     local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt then
-        return prompt.Enabled
-    end
-    return false
+    return prompt and prompt.Enabled
 end
 
--- 🔍 ค้นหา ATM ตัวแรกที่พร้อมใช้งาน
+-- 🔍 ค้นหา ATM ที่ใกล้ที่สุดและพร้อมใช้งาน
 local function FindNearestReadyATM()
     local nearestATM = nil
     local shortestDist = math.huge
-    for index, atm in pairs(ATMFolder:GetChildren()) do
-        local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
-        local dist = (pos - rootPart.Position).Magnitude
-        print("[ATM ลำดับ " .. index .. "] =>", atm:GetFullName(), " | ระยะ =", math.floor(dist))
-        if IsATMReady(atm) and dist < shortestDist then
-            shortestDist = dist
-            nearestATM = atm
-        else
-            print("[⛔] ATM ยังไม่พร้อมใช้งานหรือไกลกว่า")
+    
+    if not rootPart then return nil end -- ป้องกัน error หาก rootPart ยังไม่พร้อม
+
+    for _, atm in ipairs(ATMFolder:GetChildren()) do
+        if atm:IsA("BasePart") or atm:IsA("Model") then
+            local pos = atm:IsA("Model") and atm:GetPivot().Position or atm.Position
+            local dist = (pos - rootPart.Position).Magnitude
+            
+            -- print("[ATM Info] Checking " .. atm.Name .. " | Distance: " .. math.floor(dist))
+            
+            if IsATMReady(atm) and dist < shortestDist then
+                shortestDist = dist
+                nearestATM = atm
+            end
         end
+    end
+
+    if nearestATM then
+        print("[AutoFarmATM] ✅ พบ ATM ที่พร้อมใช้งาน: " .. nearestATM:GetFullName() .. " | ระยะ: " .. math.floor(shortestDist))
     end
     return nearestATM
 end
 
--- 🧭 เดินไปยัง ATM โดยใช้ Pathfinding (สามารถทะลุสิ่งที่ CanCollide = false ได้)
+-- 🧭 เดินไปยัง ATM โดยใช้ PathfindingService
 local function WalkToATM(atm)
-    if not atm then return end
+    if not atm or not humanoid or not rootPart then return end
+    
     moving = true
     currentATM = atm
-    local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
+    local targetPos = atm:IsA("Model") and atm:GetPivot().Position or atm.Position
 
+    -- สร้าง Path object
     local path = PathfindingService:CreatePath({
-        AgentRadius = 2,
-        AgentHeight = 5,
+        AgentRadius = 3,
+        AgentHeight = 6,
         AgentCanJump = true,
         AgentCanClimb = true,
         WaypointSpacing = 4
     })
 
-    -- เคลียร์ obstacles ที่ทะลุได้
-    for _, part in pairs(Workspace:GetDescendants()) do
-        if part:IsA("BasePart") and not part.CanCollide then
-            part.LocalTransparencyModifier = 0.9 -- debug
-            part.CanQuery = false
-        end
-    end
+    -- [!] ปรับปรุง: ลบลูปที่เช็ค Part ทั้งหมดใน Workspace ออก
+    -- PathfindingService จะไม่สนใจ Part ที่ CanCollide = false อยู่แล้วโดยอัตโนมัติ
+    -- การใส่ลูปนี้ไว้ทำให้เกมกระตุก (Lag) อย่างรุนแรงโดยไม่จำเป็น
 
+    -- คำนวณเส้นทาง
     path:ComputeAsync(rootPart.Position, targetPos)
+
     if path.Status == Enum.PathStatus.Success then
-        print("[✅ AutoFarmATM] เดินไปยัง ATM =>", atm:GetFullName())
-        for _, waypoint in ipairs(path:GetWaypoints()) do
-            -- ระหว่างเดิน เช็คว่า ATM ยังพร้อมอยู่หรือไม่
+        print("[AutoFarmATM] 🚶 กำลังเดินไปยัง ATM =>", atm:GetFullName())
+        local waypoints = path:GetWaypoints()
+        
+        for i, waypoint in ipairs(waypoints) do
+            -- ระหว่างเดิน เช็คว่า ATM ยังพร้อมอยู่หรือไม่ หรือมีเป้าหมายใหม่ที่ดีกว่า
             if not IsATMReady(currentATM) then
-                print("[⚠️] ATM ถูกใช้ไปแล้ว → หาตู้ใหม่")
+                print("[AutoFarmATM] ⚠️ ATM ถูกใช้ไปแล้ว, กำลังค้นหาตู้ใหม่...")
                 moving = false
-                return
+                return -- ออกจากฟังก์ชันเพื่อหาตู้ใหม่ในลูปหลัก
             end
+
             humanoid:MoveTo(waypoint.Position)
-            humanoid.MoveToFinished:Wait()
+            
+            -- ถ้าเป็นจุดสุดท้าย ให้รอจนกว่าจะถึงจริงๆ
+            if i == #waypoints then
+                humanoid.MoveToFinished:Wait(2) -- รอ tối đa 2 วินาที
+            end
         end
+        print("[AutoFarmATM] ✨ ถึงที่หมายแล้ว!")
     else
-        warn("[❌ AutoFarmATM] ไม่สามารถคำนวณ path ได้! สถานะ:", path.Status.Name)
+        warn("[AutoFarmATM] ❌ ไม่สามารถคำนวณเส้นทางได้! สถานะ:", path.Status.Name)
     end
+    
     moving = false
 end
 
--- 🔁 ลูปฟาร์ม ATM แบบเรียบง่าย: เลือกตู้แรกที่พร้อม
-while true do
-    if not moving then
+--// Event Connections
+
+-- ฟังชันเมื่อตัวละครเกิด/รีเซ็ต
+player.CharacterAdded:Connect(function(newChar)
+    print("[AutoFarmATM] ⚠️ ตัวละครถูกรีเซ็ต, กำลังโหลดใหม่...")
+    moving = false
+    -- รอให้ตัวละครโหลดสมบูรณ์
+    newChar:WaitForChild("Humanoid")
+    newChar:WaitForChild("HumanoidRootPart")
+    
+    BindCharacter()
+    task.wait(1) -- รอสักครู่เพื่อให้ทุกอย่างพร้อม
+    
+    local atm = FindNearestReadyATM()
+    if atm then
+        WalkToATM(atm)
+    else
+        warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่พร้อมใช้งานหลังจากการรีเซ็ต")
+    end
+end)
+
+--// Main Loop
+
+BindCharacter() -- เรียกครั้งแรกเมื่อสคริปต์เริ่มทำงาน
+
+while task.wait(3) do
+    if not moving and humanoid and rootPart then
         local atm = FindNearestReadyATM()
         if atm then
             WalkToATM(atm)
         else
-            warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่พร้อมใช้งาน")
+            -- ไม่ต้องแสดงคำเตือนทุกครั้งที่หาไม่เจอ อาจจะแค่รอเฉยๆ
+            -- print("[AutoFarmATM] ⏳ กำลังรอ ATM ที่พร้อมใช้งาน...")
         end
     end
-    task.wait(3)
 end
