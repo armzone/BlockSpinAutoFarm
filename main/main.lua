@@ -6,7 +6,7 @@ local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService") -- ใช้สำหรับจำลองการกดปุ่ม (อาจไม่ทำงานเสมอไป)
 
-local player = Players.LocalPlayer
+local player = Players:GetLocalPlayer() -- ใช้ GetLocalPlayer() แทน LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
 local humanoid = char:WaitForChild("Humanoid")
 local rootPart = char:WaitForChild("HumanoidRootPart")
@@ -54,6 +54,12 @@ local function WalkToATM(atm)
     currentATM = atm
     local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
 
+    -- เก็บค่า WalkSpeed เดิมไว้
+    local originalWalkSpeed = humanoid.WalkSpeed
+    -- กำหนดความเร็วใหม่ที่ต้องการ (เช่น 30 หรือค่าอื่น ๆ ที่คุณต้องการ)
+    humanoid.WalkSpeed = 30 
+    print(string.format("[AutoFarmATM] ตั้งค่า WalkSpeed เป็น %.1f", humanoid.WalkSpeed))
+
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
         AgentHeight = 5,
@@ -71,6 +77,7 @@ local function WalkToATM(atm)
             if not IsATMReady(currentATM) or not humanoid.Parent then
                 print("[⚠️] ATM ถูกใช้ไปแล้วหรือผู้เล่นตาย → หาตู้ใหม่")
                 humanoid:MoveTo(rootPart.Position) -- หยุดการเคลื่อนที่ปัจจุบัน
+                humanoid.WalkSpeed = originalWalkSpeed -- คืนค่า WalkSpeed
                 moving = false
                 return
             end
@@ -84,6 +91,7 @@ local function WalkToATM(atm)
             if not success or message == "timeout" then
                 warn("[❌ AutoFarmATM] MoveToFinished timeout หรือเกิดข้อผิดพลาด: ", message)
                 humanoid:MoveTo(rootPart.Position) -- หยุดการเคลื่อนที่
+                humanoid.WalkSpeed = originalWalkSpeed -- คืนค่า WalkSpeed
                 moving = false
                 return
             end
@@ -107,6 +115,7 @@ local function WalkToATM(atm)
     else
         warn("[❌ AutoFarmATM] ไม่สามารถคำนวณ path ได้! สถานะ:", path.Status.Name)
     end
+    humanoid.WalkSpeed = originalWalkSpeed -- คืนค่า WalkSpeed เสมอเมื่อจบการเคลื่อนที่
     moving = false
 end
 
