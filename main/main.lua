@@ -1,5 +1,5 @@
 -- LocalScript: AutoFarmATM (StarterPlayerScripts)
--- กลับไปใช้แบบเดินไปยังตู้แรกที่พร้อม และเปลี่ยนเป้าหมายหากตู้ถูกใช้ไปก่อนถึง
+-- ใช้ TweenService กับ Position (ไม่ใช้ CFrame) และยกตัวละครขึ้นจากพื้นเล็กน้อยเพื่อหลีกเลี่ยงการจมและโดนตรวจจับ
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -78,16 +78,15 @@ local function WalkToATM(atm)
                 return
             end
 
-            local lookAtPosition = (i + 1 <= #waypoints) and waypoints[i+1].Position or targetPos
-            local targetCFrame = CFrame.new(waypoint.Position, lookAtPosition)
+            local adjustedTargetPos = waypoint.Position + Vector3.new(0, 5, 0)
 
-            local distance = (rootPart.Position - waypoint.Position).Magnitude
-            local desiredSpeed = 100
-            local duration = distance / desiredSpeed 
+            local distance = (rootPart.Position - adjustedTargetPos).Magnitude
+            local desiredSpeed = 50
+            local duration = distance / desiredSpeed
             if duration < 0.1 then duration = 0.1 end
 
             local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, false, 0)
-            local tween = TweenService:Create(rootPart, tweenInfo, {CFrame = targetCFrame})
+            local tween = TweenService:Create(rootPart, tweenInfo, {Position = adjustedTargetPos})
             tween:Play()
 
             local tweenFinished = false
