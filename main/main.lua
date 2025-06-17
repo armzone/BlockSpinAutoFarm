@@ -26,7 +26,8 @@ local moving = false
 
 -- Raycast parameters for ground detection
 local raycastParams = RaycastParams.new()
-raycastParams.FilterDescendantsInstances = {char} -- Exclude character itself
+-- Filter out the character's parts by getting all descendants of the character
+raycastParams.FilterDescendantsInstances = {char}
 raycastParams.FilterType = Enum.RaycastFilterType.Exclude
 
 -- Function to get the Y-coordinate of the ground at a given X,Z position
@@ -179,18 +180,19 @@ local function WalkToATM(atm)
                 
                 -- Get the ground Y at the current waypoint's X,Z position
                 local groundY = getGroundY(waypoint.Position)
-                -- Adjust the waypoint's Y position to be on the ground, considering HipHeight
-                local adjustedWaypointPosition = Vector3.new(waypoint.Position.X, groundY + humanoid.HipHeight, waypoint.Position.Z)
+                -- Adjust the waypoint's Y position to be on the ground, considering HipHeight and a small offset
+                local groundOffset = 0.5 -- Small offset to float slightly above ground, adjust as needed
+                local adjustedWaypointPosition = Vector3.new(waypoint.Position.X, groundY + humanoid.HipHeight + groundOffset, waypoint.Position.Z)
 
                 -- Calculate target CFrame, including rotation to face the next Waypoint
                 -- The lookAtPosition should also be adjusted to ground level for natural looking
                 local lookAtPosition = adjustedWaypointPosition 
                 if i + 1 <= #waypoints then
                     local nextWaypointGroundY = getGroundY(waypoints[i+1].Position)
-                    lookAtPosition = Vector3.new(waypoints[i+1].Position.X, nextWaypointGroundY + humanoid.HipHeight, waypoints[i+1].Position.Z)
+                    lookAtPosition = Vector3.new(waypoints[i+1].Position.X, nextWaypointGroundY + humanoid.HipHeight + groundOffset, waypoints[i+1].Position.Z)
                 else
                     local finalTargetGroundY = getGroundY(targetPos)
-                    lookAtPosition = Vector3.new(targetPos.X, finalTargetGroundY + humanoid.HipHeight, targetPos.Z)
+                    lookAtPosition = Vector3.new(targetPos.X, finalTargetGroundY + humanoid.HipHeight + groundOffset, targetPos.Z)
                 end
 
                 -- Create target CFrame for movement and rotation
@@ -198,7 +200,7 @@ local function WalkToATM(atm)
 
                 -- Calculate distance for Tween duration to maintain consistent speed
                 local distance = (rootPart.Position - adjustedWaypointPosition).Magnitude -- Use adjusted position for distance
-                local desiredSpeed = 30 -- Define desired speed (studs per second)
+                local desiredSpeed = 25 -- Adjusted speed slightly lower to reduce teleport detection, adjust as needed
                 local duration = distance / desiredSpeed 
                 if duration < 0.1 then duration = 0.1 end -- Set minimum duration to prevent flickering
 
