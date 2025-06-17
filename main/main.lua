@@ -77,7 +77,11 @@ local function WalkToATM(atm)
             if not IsATMReady(currentATM) or not humanoid.Parent then moving = false return end
             humanoid:MoveTo(waypoint.Position)
             local finished = false
-            local conn = humanoid.MoveToFinished:Connect(function() finished = true conn:Disconnect() end)
+            local conn
+            conn = humanoid.MoveToFinished:Connect(function()
+                finished = true
+                if conn then conn:Disconnect() end
+            end)
             local startTime = os.clock()
             while not finished and os.clock() - startTime < 5 do
                 if not IsATMReady(currentATM) then
