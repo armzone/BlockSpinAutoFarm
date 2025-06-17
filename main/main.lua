@@ -41,6 +41,10 @@ end
 local function DrawPath(waypoints)
     ClearPathVisualization() -- Clear any existing path first
 
+    if not waypoints or #waypoints < 2 then -- Ensure there are enough waypoints to draw segments
+        return
+    end
+
     for i = 1, #waypoints - 1 do
         local p1 = waypoints[i].Position
         local p2 = waypoints[i+1].Position
@@ -91,11 +95,15 @@ local function FindNearestReadyATM()
     local shortestDist = math.huge
     for _, atm in pairs(ATMFolder:GetChildren()) do
         -- Check if it's a Model or BasePart before calculating position to prevent errors
-        if not (atm:IsA("Model") or atm:IsA("BasePart")) then
+        local pos = nil
+        if atm:IsA("Model") then
+            pos = atm:GetModelCFrame().Position
+        elseif atm:IsA("BasePart") then
+            pos = atm.Position
+        else
             continue -- Skip objects that are not Models or Parts
         end
 
-        local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
         local dist = (pos - rootPart.Position).Magnitude
         -- print("[ATM] =>", atm:GetFullName(), " | Distance =", math.floor(dist), "| Ready:", IsATMReady(atm)) -- Debugging line
         
@@ -122,143 +130,149 @@ local function WalkToATM(atm)
         WaypointSpacing = 4
     })
 
-    path:ComputeAsync(rootPart.Position, targetPos)
+    -- pcall to catch errors during ComputeAsync, though Path.Status should handle most cases
+    local success, errorMessage = pcall(function()
+        path:ComputeAsync(rootPart.Position, targetPos)
+    end)
 
-    if path.Status == Enum.PathStatus.Success then
-        local waypoints = path:GetWaypoints()
-        DrawPath(waypoints) -- Draw the path visualization
+    if not success or path.Status ~= Enum.PathStatus.Success then
+        warn("[❌ AutoFarmATM] Failed to compute path! Status:", path.Status.Name, "Error:", errorMessage or "N/A")
+        if not humanoid.Seat then -- Only reset WalkSpeed if not in vehicle
+            humanoid.WalkSpeed = humanoid.WalkSpeed -- Should be originalWalkSpeed, but it's not captured yet outside the loop.
+                                                   -- This is a fallback; the main reset is at the end of the function.
+        end
+        ClearPathVisualization() -- Clear path on Pathfinding failure
+        moving = false
+        return
+    end
 
-        -- Check if the player is in a vehicle (VehicleSeat)
-        local vehicleSeat = nil
-        if humanoid.Seat and humanoid.Seat:IsA("VehicleSeat") then
-            vehicleSeat = humanoid.Seat
-            print("[✅ AutoFarmATM] Moving by vehicle to ATM =>", atm:GetFullName())
-            -- Ensure PlatformStand is false if it was active from a previous run
-            humanoid.PlatformStand = false
-        else
-            print("[✅ AutoFarmATM] Walking (humanoid:MoveTo()) to ATM =>", atm:GetFullName())
-            -- For humanoid:MoveTo(), PlatformStand should generally be false
-            humanoid.PlatformStand = false 
+    local waypoints = path:GetWaypoints()
+    DrawPath(waypoints) -- Draw the path visualization
+
+    -- Check if the player is in a vehicle (VehicleSeat)
+    local vehicleSeat = nil
+    if humanoid.Seat and humanoid.Seat:IsA("VehicleSeat") then
+        vehicleSeat = humanoid.Seat
+        print("[✅ AutoFarmATM] Moving by vehicle to ATM =>", atm:GetFullName())
+        -- Ensure PlatformStand is false if it was active from a previous run
+        humanoid.PlatformStand = false
+    else
+        print("[✅ AutoFarmATM] Walking (humanoid:MoveTo()) to ATM =>", atm:GetFullName())
+        -- For humanoid:MoveTo(), PlatformStand should generally be false
+        humanoid.PlatformStand = false 
+    end
+
+    -- Store original WalkSpeed for humanoid if walking
+    local originalWalkSpeed = humanoid.WalkSpeed
+    if not vehicleSeat then
+        -- Set desired WalkSpeed for walking character
+        humanoid.WalkSpeed = 24 -- Default Roblox walkspeed, you can increase this up to ~32 for noticeable difference
+        print(string.format("[AutoFarmATM] ตั้งค่า WalkSpeed เป็น %.1f", humanoid.WalkSpeed))
+    end
+
+    for i, waypoint in ipairs(waypoints) do
+        -- During movement, check if ATM is still ready and if player is alive
+        if not IsATMReady(currentATM) or not humanoid.Parent then
+            print("[⚠️] ATM used or player died → Finding new ATM")
+            if not vehicleSeat then
+                humanoid.WalkSpeed = originalWalkSpeed -- Revert WalkSpeed for walking
+            end
+            ClearPathVisualization() -- Clear path on interruption
+            moving = false
+            return
         end
 
-        -- Store original WalkSpeed for humanoid if walking
-        local originalWalkSpeed = humanoid.WalkSpeed
-        if not vehicleSeat then
-            -- Set desired WalkSpeed for walking character
-            humanoid.WalkSpeed = 24 -- Default Roblox walkspeed, you can increase this up to ~32 for noticeable difference
-            print(string.format("[AutoFarmATM] ตั้งค่า WalkSpeed เป็น %.1f", humanoid.WalkSpeed))
-        end
-
-        for i, waypoint in ipairs(waypoints) do
-            -- During movement, check if ATM is still ready and if player is alive
-            if not IsATMReady(currentATM) or not humanoid.Parent then
-                print("[⚠️] ATM used or player died → Finding new ATM")
-                if not vehicleSeat then
-                    humanoid.WalkSpeed = originalWalkSpeed -- Revert WalkSpeed for walking
-                end
-                ClearPathVisualization() -- Clear path on interruption
+        if vehicleSeat then
+            -- Vehicle movement logic (remains unchanged)
+            local vehicleModel = vehicleSeat.Parent -- Assuming VehicleSeat is directly under the vehicle model
+            if not vehicleModel or not vehicleModel.PrimaryPart then
+                warn("[❌ AutoFarmATM] Vehicle model or PrimaryPart not found.")
                 moving = false
+                ClearPathVisualization()
                 return
             end
+            
+            local primaryPart = vehicleModel.PrimaryPart
+            local lookAtPosition = waypoint.Position
 
-            if vehicleSeat then
-                -- Vehicle movement logic (remains unchanged)
-                local vehicleModel = vehicleSeat.Parent -- Assuming VehicleSeat is directly under the vehicle model
-                if not vehicleModel or not vehicleModel.PrimaryPart then
-                    warn("[❌ AutoFarmATM] Vehicle model or PrimaryPart not found.")
+            local loopStartTime = os.clock()
+            local maxWaypointTime = 10 -- Max time to reach a waypoint for vehicle
+
+            repeat
+                -- Re-check conditions inside the loop for responsiveness
+                if not IsATMReady(currentATM) or not humanoid.Parent then
+                    print("[⚠️] ATM used or player died during vehicle movement → Finding new ATM")
+                    vehicleSeat.Throttle = 0
+                    vehicleSeat.Steer = 0
                     moving = false
                     ClearPathVisualization()
                     return
                 end
+
+                -- Calculate direction to waypoint
+                local direction = (lookAtPosition - primaryPart.Position).Unit
+                local dotProduct = primaryPart.CFrame.lookVector:Dot(direction)
                 
-                local primaryPart = vehicleModel.PrimaryPart
-                local lookAtPosition = waypoint.Position
-
-                local loopStartTime = os.clock()
-                local maxWaypointTime = 10 -- Max time to reach a waypoint for vehicle
-
-                repeat
-                    -- Re-check conditions inside the loop for responsiveness
-                    if not IsATMReady(currentATM) or not humanoid.Parent then
-                        print("[⚠️] ATM used or player died during vehicle movement → Finding new ATM")
-                        vehicleSeat.Throttle = 0
-                        vehicleSeat.Steer = 0
-                        moving = false
-                        ClearPathVisualization()
-                        return
-                    end
-
-                    -- Calculate direction to waypoint
-                    local direction = (lookAtPosition - primaryPart.Position).Unit
-                    local dotProduct = primaryPart.CFrame.lookVector:Dot(direction)
-                    
-                    -- Calculate steering angle (simplified)
-                    local rightVector = primaryPart.CFrame.rightVector
-                    local angleDot = rightVector:Dot(direction)
-                    
-                    if dotProduct > 0.95 then -- Mostly facing waypoint
-                        vehicleSeat.Steer = 0
-                    elseif angleDot > 0 then -- Waypoint is to the right
-                        vehicleSeat.Steer = 1
-                    else -- Waypoint is to the left
-                        vehicleSeat.Steer = -1
-                    end
-
-                    vehicleSeat.Throttle = 1 -- Full forward throttle
-
-                    task.wait(0.1) -- Update every 0.1 seconds
-                until (primaryPart.Position - waypoint.Position).Magnitude < waypoint.DistanceFromPrevious + 5 or os.clock() - loopStartTime > maxWaypointTime
-
-                -- Stop vehicle at waypoint if needed or prepare for next
-                vehicleSeat.Throttle = 0 -- Stop momentarily at waypoint to ensure proper turn
-                vehicleSeat.Steer = 0
-                task.wait(0.5) -- Small pause to allow vehicle to stabilize
+                -- Calculate steering angle (simplified)
+                local rightVector = primaryPart.CFrame.rightVector
+                local angleDot = rightVector:Dot(direction)
                 
-            else
-                -- Humanoid (walking) movement logic using humanoid:MoveTo()
-                humanoid:MoveTo(waypoint.Position)
-                
-                -- Add timeout for MoveToFinished to prevent getting stuck
-                local success, message = pcall(function()
-                    humanoid.MoveToFinished:Wait(5) -- Wait up to 5 seconds for MoveTo to complete
-                end)
-
-                if not success or message == "timeout" then
-                    warn("[❌ AutoFarmATM] MoveToFinished timeout or error: ", message)
-                    humanoid:MoveTo(rootPart.Position) -- Stop current movement
-                    humanoid.WalkSpeed = originalWalkSpeed -- Revert WalkSpeed
-                    ClearPathVisualization() -- Clear path on timeout/error
-                    moving = false
-                    return
+                if dotProduct > 0.95 then -- Mostly facing waypoint
+                    vehicleSeat.Steer = 0
+                elseif angleDot > 0 then -- Waypoint is to the right
+                    vehicleSeat.Steer = 1
+                else -- Waypoint is to the left
+                    vehicleSeat.Steer = -1
                 end
-            end -- End of if vehicleSeat / else
-        end -- End of waypoint loop
 
-        print("[✅ AutoFarmATM] Arrived at ATM:", atm:GetFullName())
+                vehicleSeat.Throttle = 1 -- Full forward throttle
 
-        -- Revert WalkSpeed for humanoid if walking
-        if not vehicleSeat then
-            humanoid.WalkSpeed = originalWalkSpeed
-        else
-            vehicleSeat.Throttle = 0 -- Stop vehicle completely upon arrival
+                task.wait(0.1) -- Update every 0.1 seconds
+            until (primaryPart.Position - waypoint.Position).Magnitude < waypoint.DistanceFromPrevious + 5 or os.clock() - loopStartTime > maxWaypointTime
+
+            -- Stop vehicle at waypoint if needed or prepare for next
+            vehicleSeat.Throttle = 0 -- Stop momentarily at waypoint to ensure proper turn
             vehicleSeat.Steer = 0
-        end
-        ClearPathVisualization() -- Clear path on successful arrival
+            task.wait(0.5) -- Small pause to allow vehicle to stabilize
+            
+        else
+            -- Humanoid (walking) movement logic using humanoid:MoveTo()
+            humanoid:MoveTo(waypoint.Position)
+            
+            -- Add timeout for MoveToFinished to prevent getting stuck
+            local success, message = pcall(function()
+                humanoid.MoveToFinished:Wait(5) -- Wait up to 5 seconds for MoveTo to complete
+            end)
 
-        local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
-        if prompt then
-            print("[AutoFarmATM] Found ProximityPrompt on ATM, but requires button press or RemoteEvent to activate.")
-            -- Example of simulating a ProximityPrompt button press (may not be reliable):
-            -- UserInputService:SimulateKeyPress(Enum.KeyCode.E) -- If activation key is E
-        end
+            if not success or message == "timeout" then
+                warn("[❌ AutoFarmATM] MoveToFinished timeout or error: ", message)
+                humanoid:MoveTo(rootPart.Position) -- Stop current movement
+                humanoid.WalkSpeed = originalWalkSpeed -- Revert WalkSpeed
+                ClearPathVisualization() -- Clear path on timeout/error
+                moving = false
+                return
+            end
+        end -- End of if vehicleSeat / else
+    end -- End of waypoint loop
 
+    print("[✅ AutoFarmATM] Arrived at ATM:", atm:GetFullName())
+
+    -- Revert WalkSpeed for humanoid if walking
+    if not vehicleSeat then
+        humanoid.WalkSpeed = originalWalkSpeed
     else
-        warn("[❌ AutoFarmATM] Failed to compute path! Status:", path.Status.Name)
-        if not vehicleSeat then
-            humanoid.WalkSpeed = originalWalkSpeed -- Ensure WalkSpeed is reset if Pathfinding fails
-        end
-        ClearPathVisualization() -- Clear path on Pathfinding failure
+        vehicleSeat.Throttle = 0 -- Stop vehicle completely upon arrival
+        vehicleSeat.Steer = 0
     end
+    ClearPathVisualization() -- Clear path on successful arrival
+
+    local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        print("[AutoFarmATM] Found ProximityPrompt on ATM, but requires button press or RemoteEvent to activate.")
+        -- Example of simulating a ProximityPrompt button press (may not be reliable):
+        -- UserInputService:SimulateKeyPress(Enum.KeyCode.E) -- If activation key is E
+    end
+
     moving = false
 end
 
