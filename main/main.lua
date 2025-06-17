@@ -1,27 +1,65 @@
--- main.lua
--- โหลดโมดูลจาก GitHub และทำงานอัตโนมัติผ่าน loadstring()
+-- LocalScript: AutoFarmATM (StarterPlayerScripts)
+-- เวอร์ชันรวม (ยังไม่แยกโมดูล) เพื่อทดสอบการทำงานเบื้องต้น
 
--- โหลด ATMNavigator
-local ATMNavigator = loadstring(game:HttpGet("https://raw.githubusercontent.com/armzone/BlockSpinAutoFarm/main/Modules/ATMNavigator.lua"))()
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local PathfindingService = game:GetService("PathfindingService")
 
--- โหลด ATMPathfinder
-local ATMPathfinder = loadstring(game:HttpGet("https://raw.githubusercontent.com/armzone/BlockSpinAutoFarm/main/Modules/ATMPathfinder.lua"))()
+local player = Players.LocalPlayer
+local char = player.Character or player.CharacterAdded:Wait()
+local humanoid = char:WaitForChild("Humanoid")
+local rootPart = char:WaitForChild("HumanoidRootPart")
 
--- รอโหลดตัวละคร
-local player = game:GetService("Players").LocalPlayer
-repeat wait() until player.Character
-wait(1)
+local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
 
 -- 🔍 ค้นหา ATM ที่ใกล้ที่สุด
-local atm = ATMNavigator:FindNearestATM()
-if atm then
-    print("[AutoFarm] ✅ เจอ ATM:", atm:GetFullName())
-    
-    -- 🧭 เดินไปยัง ATM
-    local walked = ATMPathfinder:WalkToATM(atm)
-    if walked then
-        print("[AutoFarm] 🚶 ถึง ATM แล้ว!")
+local function FindNearestATM()
+    local nearestATM = nil
+    local shortestDist = math.huge
+    for _, atm in pairs(ATMFolder:GetChildren()) do
+        if atm:IsA("Model") or atm:IsA("Part") then
+            local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
+            local dist = (pos - rootPart.Position).Magnitude
+            if dist < shortestDist then
+                shortestDist = dist
+                nearestATM = atm
+            end
+        end
     end
+    return nearestATM
+end
+
+-- 🧭 เดินไปยัง ATM โดยใช้ Pathfinding
+local function WalkToATM(atm)
+    local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
+
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        AgentCanClimb = true,
+        WaypointSpacing = 4
+    })
+
+    path:ComputeAsync(rootPart.Position, targetPos)
+
+    if path.Status == Enum.PathStatus.Success then
+        print("[✅ AutoFarmATM] Path คำนวณสำเร็จ เดินไปยัง ATM...")
+        for _, waypoint in ipairs(path:GetWaypoints()) do
+            humanoid:MoveTo(waypoint.Position)
+            humanoid.MoveToFinished:Wait()
+        end
+        return true
+    else
+        warn("[❌ AutoFarmATM] ไม่สามารถคำนวณ path ได้! สถานะ:", path.Status.Name)
+        return false
+    end
+end
+
+-- 🚀 ทดสอบเรียกใช้
+local atm = FindNearestATM()
+if atm then
+    WalkToATM(atm)
 else
-    warn("[AutoFarm] ❌ ไม่พบ ATM")
+    warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่ใกล้ที่สุด")
 end
