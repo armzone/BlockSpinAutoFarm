@@ -1,70 +1,68 @@
--- สคริปต์ทดสอบ TrySetBMXSpeed + Tween ความเร็ว + Tween เคลื่อนไปข้างหน้า
+-- Tween โมเดล BMX ของผู้เล่นให้เคลื่อนที่ไปข้างหน้า โดยไม่ยุ่งกับ BMX ของคนอื่น
 
-local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
 
-local function TrySetBMXSpeed()
-    print("📦 [BMX Debug] เริ่มค้นหา BMX...")
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
 
-    local vehiclesFolder = Workspace:FindFirstChild("Vehicles")
-    if not vehiclesFolder then
-        warn("❌ ไม่พบโฟลเดอร์ Vehicles ใน Workspace")
-        return
-    end
+-- หาวัตถุที่ผู้เล่นนั่งอยู่ (เช่น VehicleSeat ภายใน BMX)
+local seat = character:FindFirstChildWhichIsA("Seat", true) or character:FindFirstChildWhichIsA("VehicleSeat", true)
+if not seat then
+    warn("❌ ไม่พบ Seat ที่ผู้เล่นกำลังนั่งอยู่")
+    return
+end
 
-    local bmxModel = vehiclesFolder:GetChildren()[5]
-    if not (bmxModel and bmxModel:IsA("Model")) then
-        warn("❌ ไม่พบ BMX ที่ตำแหน่ง index 5 หรือไม่ใช่ Model")
-        return
-    end
+-- ไล่ขึ้นไปหา Model ที่เป็น BMX โดยเช็กจาก Vehicles
+local bmx = seat:FindFirstAncestorWhichIsA("Model")
+while bmx and bmx.Parent ~= Workspace:FindFirstChild("Vehicles") do
+    bmx = bmx.Parent
+end
 
-    print("✅ พบ BMX ชื่อ:", bmxModel.Name)
+if not bmx or not bmx:IsA("Model") then
+    warn("❌ ไม่พบโมเดล BMX ของผู้เล่นภายใต้ Vehicles")
+    return
+end
 
-    local seat = bmxModel:FindFirstChild("DriverSeat", true)
-    if seat and seat:IsA("VehicleSeat") then
-        print("✅ พบ VehicleSeat:", seat.Name)
-        print("🕹️ Occupant:", seat.Occupant and seat.Occupant.Name or "ไม่มี")
+print("✅ พบ BMX ของผู้เล่น: " .. bmx.Name)
 
-        local original = seat.MaxSpeed
-        print("🔧 MaxSpeed เดิม:", original)
-
-        -- ลอง tween ความเร็วขึ้นทีละน้อย (สำหรับกรณี MaxSpeed ไม่ตอบสนอง)
-        local tweenInfo = TweenInfo.new(2, Enum.EasingStyle.Linear)
-        local goal = { MaxSpeed = 100 }
-
-        local success, tween = pcall(function()
-            return TweenService:Create(seat, tweenInfo, goal)
-        end)
-
-        if success and tween then
-            tween:Play()
-            print("🚴‍♂️ Tween กำลังปรับ MaxSpeed → 100")
-            tween.Completed:Wait()
-            print("✅ MaxSpeed หลัง Tween:", seat.MaxSpeed)
-        else
-            warn("❌ ไม่สามารถสร้าง Tween สำหรับ MaxSpeed")
-        end
-
-        -- 🚀 Tween ตัว BMX ให้เคลื่อนที่ไปข้างหน้า
-        local root = bmxModel.PrimaryPart or bmxModel:FindFirstChild("PrimaryPart") or seat
-        if root then
-            print("➡️ Tween ตัว BMX ไปข้างหน้า 50 studs")
-            local moveGoal = { CFrame = root.CFrame * CFrame.new(0, 0, -50) }
-            local moveTween = TweenService:Create(root, TweenInfo.new(2, Enum.EasingStyle.Linear), moveGoal)
-            moveTween:Play()
-        else
-            warn("❌ ไม่พบ PrimaryPart สำหรับการเคลื่อนย้าย BMX")
-        end
-
-        if seat.MaxSpeed == original then
-            warn("⚠️ MaxSpeed ไม่เปลี่ยน อาจมีระบบบังคับจากเซิร์ฟเวอร์")
-        else
-            print("🎉 MaxSpeed ปรับสำเร็จ!")
-        end
+-- ตั้ง PrimaryPart หากยังไม่มี
+if not bmx.PrimaryPart then
+    local fallback = bmx:FindFirstChild("Chassis") or bmx:FindFirstChildWhichIsA("BasePart")
+    if fallback then
+        bmx.PrimaryPart = fallback
+        print("🔗 ตั้ง PrimaryPart เป็น: " .. fallback.Name)
     else
-        warn("❌ ไม่พบ VehicleSeat ใน BMX")
+        warn("❌ ไม่สามารถตั้ง PrimaryPart ได้")
+        return
     end
 end
 
--- เรียกทันทีเมื่อโหลดสคริปต์
-TrySetBMXSpeed()
+-- ปลด Anchor ทุกชิ้นส่วนเพื่อให้ขยับได้จริง
+for _, part in ipairs(bmx:GetDescendants()) do
+    if part:IsA("BasePart") then
+        part.Anchored = false
+    end
+end
+
+-- สร้าง Tween ขยับไปข้างหน้า 60 studs
+local startCFrame = bmx:GetPrimaryPartCFrame()
+local endCFrame = startCFrame * CFrame.new(0, 0, -60)
+
+local tweenValue = Instance.new("CFrameValue")
+tweenValue.Value = startCFrame
+
+local tween = TweenService:Create(tweenValue, TweenInfo.new(2, Enum.EasingStyle.Linear), { Value = endCFrame })
+
+-- ทุกครั้งที่ค่าเปลี่ยน ให้อัปเดตตำแหน่งของโมเดลจริง
+local conn = tweenValue:GetPropertyChangedSignal("Value"):Connect(function()
+    bmx:SetPrimaryPartCFrame(tweenValue.Value)
+end)
+
+tween:Play()
+tween.Completed:Connect(function()
+    conn:Disconnect()
+    tweenValue:Destroy()
+    print("✅ Tween เสร็จสิ้นแล้ว")
+end)
