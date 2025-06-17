@@ -4,7 +4,8 @@
     - ลูปที่ไม่จำเป็นในฟังก์ชัน WalkToATM ซึ่งส่งผลต่อประสิทธิภาพอย่างรุนแรงออกไป
     - ปรับปรุงการทำงานให้เสถียรขึ้น
     - แก้ไขปัญหา NoPath
-    - [ใหม่] เพิ่มระบบ Manual Override: สคริปต์จะหยุดทำงานชั่วคราวเมื่อผู้เล่นควบคุมตัวละครเอง และจะกลับมาทำงานต่อเมื่อผู้เล่นหยุดนิ่ง
+    - เพิ่มระบบ Manual Override
+    - [ใหม่] เพิ่มตัวเลือกให้สามารถปรับ WalkSpeed เองได้
 ]]
 
 --// Services
@@ -12,6 +13,10 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
 local RunService = game:GetService("RunService")
+
+--// Configuration
+_G.WalkSpeedOverride = 24 -- กำหนดความเร็วแบบ manual ได้ที่นี่ เช่น _G.WalkSpeedOverride = 20
+local ADJUST_SPEED_BY_FPS = false -- [ใหม่] ตั้งค่านี้เป็น false หากคุณต้องการปรับ WalkSpeed เอง
 
 --// Variables
 local player = Players.LocalPlayer
@@ -22,14 +27,12 @@ local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChi
 local currentATM = nil
 local moving = false
 
--- [ใหม่] ตัวแปรสำหรับจัดการ Manual Override
 local manualOverride = false
 local lastManualMoveTime = 0
-local OVERRIDE_TIMEOUT = 5 -- จำนวนวินาทีที่ต้องหยุดนิ่ง ก่อนที่สคริปต์จะกลับมาทำงาน
+local OVERRIDE_TIMEOUT = 5 
 
 --// Functions
 
--- ฟังก์ชันสำหรับผูกตัวแปรเข้ากับตัวละคร
 local function BindCharacter()
     char = player.Character or player.CharacterAdded:Wait()
     humanoid = char:WaitForChild("Humanoid")
@@ -43,15 +46,17 @@ local function BindCharacter()
     humanoidConnection = RunService.Heartbeat:Connect(function()
         if not humanoid or not humanoid.Parent then return end
         
-        local now = tick()
-        local delta = now - lastFrame
-        lastFrame = now
+        -- [ใหม่] จะทำงานก็ต่อเมื่อ ADJUST_SPEED_BY_FPS เป็น true เท่านั้น
+        if ADJUST_SPEED_BY_FPS then
+            local now = tick()
+            local delta = now - lastFrame
+            lastFrame = now
 
-        local estimatedFPS = math.clamp(1 / delta, 30, 144)
-        local speed = math.clamp(16 * (estimatedFPS / 60), 16, 26)
-        humanoid.WalkSpeed = speed
+            local estimatedFPS = math.clamp(1 / delta, 30, 144)
+            local autoSpeed = math.clamp(16 * (estimatedFPS / 60), 16, 26)
+            humanoid.WalkSpeed = _G.WalkSpeedOverride or autoSpeed
+        end
 
-        -- [ใหม่] ตรวจจับการเคลื่อนที่จากผู้เล่น (เมื่อสคริปต์ไม่ได้ทำงาน)
         if not moving and humanoid.MoveDirection.Magnitude > 0 then
             if not manualOverride then
                 print("[AutoFarmATM] 🎮 ผู้เล่นควบคุมเอง, สคริปต์หยุดทำงานชั่วคราว")
@@ -62,14 +67,12 @@ local function BindCharacter()
     end)
 end
 
--- 🔎 ตรวจสอบว่า ATM พร้อมใช้งานหรือไม่ (เช็คจาก ProximityPrompt)
 local function IsATMReady(atm)
     if not atm or not atm.Parent then return false end
     local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
     return prompt and prompt.Enabled
 end
 
--- 🔍 ค้นหา ATM ที่ใกล้ที่สุดและพร้อมใช้งาน
 local function FindNearestReadyATM()
     local nearestATM = nil
     local shortestDist = math.huge
@@ -94,7 +97,6 @@ local function FindNearestReadyATM()
     return nearestATM
 end
 
--- 🧭 เดินไปยัง ATM โดยใช้ PathfindingService
 local function WalkToATM(atm)
     if not atm or not humanoid or not rootPart then return end
     
@@ -119,14 +121,13 @@ local function WalkToATM(atm)
 
             humanoid:MoveTo(waypoint.Position)
             
-            -- [ใหม่] รอให้เดินถึงจุดหมาย และเช็คว่าถูกขัดจังหวะหรือไม่
-            local success = humanoid.MoveToFinished:Wait(8) -- รอสูงสุด 8 วินาทีต่อจุด
+            local success = humanoid.MoveToFinished:Wait(8)
             if not success then
                 print("[AutoFarmATM] 🎮 การเคลื่อนที่ถูกขัดจังหวะโดยผู้เล่น, หยุดทำงานชั่วคราว")
                 manualOverride = true
                 lastManualMoveTime = tick()
                 moving = false
-                return -- ออกจากฟังก์ชันเดินทันที
+                return
             end
         end
         print("[AutoFarmATM] ✨ ถึงที่หมายแล้ว!")
@@ -142,7 +143,7 @@ end
 player.CharacterAdded:Connect(function(newChar)
     print("[AutoFarmATM] ⚠️ ตัวละครถูกรีเซ็ต, กำลังโหลดใหม่...")
     moving = false
-    manualOverride = false -- รีเซ็ตสถานะเมื่อตัวละครตาย
+    manualOverride = false
     
     newChar:WaitForChild("Humanoid")
     newChar:WaitForChild("HumanoidRootPart")
@@ -156,7 +157,6 @@ end)
 BindCharacter()
 
 while task.wait(1) do
-    -- [ใหม่] เช็คว่าควรจะกลับมาทำงานจาก Manual Override หรือยัง
     if manualOverride and (tick() - lastManualMoveTime > OVERRIDE_TIMEOUT) then
         print("[AutoFarmATM] 🤖 ผู้เล่นหยุดนิ่ง " .. OVERRIDE_TIMEOUT .. " วินาที, สคริปต์กลับมาทำงาน")
         manualOverride = false
