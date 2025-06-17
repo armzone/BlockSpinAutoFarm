@@ -25,7 +25,7 @@ function ATMPathfinder:WalkToATM(atm)
 
     path:ComputeAsync(rootPart.Position, targetPos)
 
-    if path.Status == Enum.PathStatus.Complete then
+    if path.Status == Enum.PathStatus.Success then
         print("[✅ ATMPathfinder] Path คำนวณสำเร็จ กำลังเดินไปยัง ATM...")
         for _, waypoint in ipairs(path:GetWaypoints()) do
             humanoid:MoveTo(waypoint.Position)
