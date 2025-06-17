@@ -5,6 +5,7 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService") -- ใช้สำหรับจำลองการกดปุ่ม (อาจไม่ทำงานเสมอไป)
+local TweenService = game:GetService("TweenService") -- เพิ่ม TweenService
 
 -- ตรวจสอบให้แน่ใจว่า LocalPlayer โหลดแล้ว
 local player = Players.LocalPlayer
@@ -54,18 +55,17 @@ local function FindNearestReadyATM()
     return nearestATM
 end
 
--- 🧭 เดินไปยัง ATM โดยใช้ Pathfinding
+-- 🧭 เดินไปยัง ATM โดยใช้ Pathfinding และ TweenService
 local function WalkToATM(atm)
     if not atm then return end
     moving = true
     currentATM = atm
     local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
 
-    -- เก็บค่า WalkSpeed เดิมไว้
-    local originalWalkSpeed = humanoid.WalkSpeed
-    -- กำหนดความเร็วใหม่ที่ต้องการ (เช่น 30 หรือค่าอื่น ๆ ที่คุณต้องการ)
-    humanoid.WalkSpeed = 30 
-    print(string.format("[AutoFarmATM] ตั้งค่า WalkSpeed เป็น %.1f", humanoid.WalkSpeed))
+    -- ไม่ต้องปรับ WalkSpeed เนื่องจากเราจะใช้ TweenService ในการเคลื่อนที่โดยตรง
+    -- local originalWalkSpeed = humanoid.WalkSpeed
+    -- humanoid.WalkSpeed = 30
+    -- print(string.format("[AutoFarmATM] ตั้งค่า WalkSpeed เป็น %.1f", humanoid.WalkSpeed))
 
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
@@ -78,39 +78,91 @@ local function WalkToATM(atm)
     path:ComputeAsync(rootPart.Position, targetPos)
 
     if path.Status == Enum.PathStatus.Success then
-        print("[✅ AutoFarmATM] เดินไปยัง ATM =>", atm:GetFullName())
-        for _, waypoint in ipairs(path:GetWaypoints()) do
+        print("[✅ AutoFarmATM] เดินไปยัง ATM โดยใช้ TweenService =>", atm:GetFullName())
+
+        -- ตั้งค่า Humanoid ให้เป็น PlatformStand ชั่วคราวเพื่อจัดการเรื่องฟิสิกส์ระหว่าง Tween
+        -- สิ่งนี้จะทำให้ตัวละครไม่ถูกแรงโน้มถ่วงหรือการเคลื่อนที่ภายใน Humanoid รบกวน
+        humanoid.PlatformStand = true
+        
+        local waypoints = path:GetWaypoints()
+        for i, waypoint in ipairs(waypoints) do
             -- ระหว่างเดิน เช็คว่า ATM ยังพร้อมอยู่หรือไม่ และว่าผู้เล่นยังมีชีวิตอยู่หรือไม่
             if not IsATMReady(currentATM) or not humanoid.Parent then
                 print("[⚠️] ATM ถูกใช้ไปแล้วหรือผู้เล่นตาย → หาตู้ใหม่")
-                humanoid:MoveTo(rootPart.Position) -- หยุดการเคลื่อนที่ปัจจุบัน
-                humanoid.WalkSpeed = originalWalkSpeed -- คืนค่า WalkSpeed
+                humanoid.PlatformStand = false -- คืนค่า PlatformStand
                 moving = false
                 return
             end
 
-            humanoid:MoveTo(waypoint.Position)
-            -- เพิ่ม timeout เพื่อป้องกันการติดค้าง
-            local success, message = pcall(function()
-                humanoid.MoveToFinished:Wait(5) -- รอสูงสุด 5 วินาที
+            local startCFrame = rootPart.CFrame
+            
+            -- คำนวณ CFrame เป้าหมาย รวมถึงการหมุนตัวให้หันไปทาง Waypoint ถัดไป
+            local lookAtPosition = waypoint.Position
+            if i + 1 <= #waypoints then
+                -- หากไม่ใช่ Waypoint สุดท้าย ให้หันหน้าไปทาง Waypoint ถัดไป
+                lookAtPosition = waypoints[i+1].Position 
+            else
+                -- หากเป็น Waypoint สุดท้าย ให้หันหน้าไปทางเป้าหมาย ATM สุดท้าย
+                lookAtPosition = targetPos 
+            end
+
+            -- สร้าง CFrame เป้าหมายสำหรับการเคลื่อนที่และการหมุนตัว
+            -- การใช้ CFrame.new(position, lookAt) จะจัดการการหมุนตัวให้หันไปทาง lookAt
+            local targetCFrame = CFrame.new(waypoint.Position, lookAtPosition)
+
+            -- คำนวณระยะทางเพื่อกำหนดระยะเวลา Tween ให้ความเร็วคงที่
+            local distance = (rootPart.Position - waypoint.Position).Magnitude
+            local desiredSpeed = 30 -- กำหนดความเร็ว (studs per second)
+            local duration = distance / desiredSpeed 
+            if duration < 0.1 then duration = 0.1 end -- กำหนดระยะเวลาขั้นต่ำเพื่อป้องกันการกระพริบ
+
+            local tweenInfo = TweenInfo.new(
+                duration,                   -- เวลาที่ใช้ในการ Tween
+                Enum.EasingStyle.Linear,    -- รูปแบบการเร่ง/ลดความเร็ว (Linear คือความเร็วคงที่)
+                Enum.EasingDirection.Out,   -- ทิศทางการเร่ง/ลดความเร็ว
+                0,                          -- จำนวนครั้งที่ทำซ้ำ
+                false,                      -- ไม่ย้อนกลับ
+                0                           -- หน่วงเวลาก่อนเริ่ม
+            )
+
+            local tween = TweenService:Create(rootPart, tweenInfo, {CFrame = targetCFrame})
+            tween:Play()
+            
+            -- รอให้ Tween จบ หรือถูกขัดจังหวะ (เช่น ผู้เล่นตาย หรือ ATM ไม่พร้อม)
+            local tweenFinished = false
+            local connection
+            connection = tween.Completed:Connect(function()
+                tweenFinished = true
+                connection:Disconnect()
             end)
 
-            if not success or message == "timeout" then
-                warn("[❌ AutoFarmATM] MoveToFinished timeout หรือเกิดข้อผิดพลาด: ", message)
-                humanoid:MoveTo(rootPart.Position) -- หยุดการเคลื่อนที่
-                humanoid.WalkSpeed = originalWalkSpeed -- คืนค่า WalkSpeed
+            -- Loop ตรวจสอบเงื่อนไขระหว่าง Tween
+            local loopStartTime = os.clock()
+            while not tweenFinished and os.clock() - loopStartTime < duration + 0.5 do -- เพิ่มเวลาเผื่อเล็กน้อย
+                if not IsATMReady(currentATM) or not humanoid.Parent then
+                    print("[⚠️] ATM ถูกใช้ไปแล้วหรือผู้เล่นตายระหว่าง Tween → หาตู้ใหม่")
+                    tween:Cancel() -- ยกเลิก Tween ปัจจุบัน
+                    humanoid.PlatformStand = false -- คืนค่า PlatformStand
+                    moving = false
+                    if connection then connection:Disconnect() end
+                    return
+                end
+                task.wait(0.05) -- ตรวจสอบทุก 0.05 วินาที
+            end
+            if not tweenFinished then -- ถ้า Tween ไม่จบภายในเวลาที่กำหนด (อาจค้าง)
+                warn("[❌ AutoFarmATM] Tween ถึง Waypoint ไม่สำเร็จภายในเวลาที่กำหนด")
+                tween:Cancel()
+                humanoid.PlatformStand = false
                 moving = false
+                if connection then connection:Disconnect() end
                 return
             end
         end
 
         print("[✅ AutoFarmATM] ถึง ATM แล้ว:", atm:GetFullName())
-        -- !!! สำคัญ: ส่วนนี้คือที่ต้องเพิ่มโค้ดสำหรับกระตุ้น ProximityPrompt !!!
-        -- ใน LocalScript คุณไม่สามารถสั่งให้ ProximityPrompt ทำงานได้โดยตรงเหมือนผู้เล่นกดปุ่ม
-        -- หากต้องการ "AutoFarm" อย่างสมบูรณ์ เกมของคุณจะต้องมี RemoteEvent
-        -- บนเซิร์ฟเวอร์ที่ใช้สำหรับ "InteractWithATM" ซึ่งไคลเอนต์สามารถเรียกใช้ได้
-        -- ตัวอย่างเช่น: game.ReplicatedStorage.RemoteEvents.InteractWithATM:FireServer(atm)
-        -- หรือผู้เล่นจะต้องกดปุ่มเองเมื่อมาถึง
+
+        -- คืนค่า Humanoid จาก PlatformStand เมื่อการเคลื่อนที่เสร็จสิ้น
+        humanoid.PlatformStand = false
 
         local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
@@ -121,8 +173,8 @@ local function WalkToATM(atm)
 
     else
         warn("[❌ AutoFarmATM] ไม่สามารถคำนวณ path ได้! สถานะ:", path.Status.Name)
+        humanoid.PlatformStand = false -- ตรวจสอบให้แน่ใจว่า PlatformStand ถูกรีเซ็ตหาก Pathfinding ล้มเหลว
     end
-    humanoid.WalkSpeed = originalWalkSpeed -- คืนค่า WalkSpeed เสมอเมื่อจบการเคลื่อนที่
     moving = false
 end
 
