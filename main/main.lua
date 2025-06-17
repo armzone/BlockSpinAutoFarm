@@ -1,4 +1,3 @@
--- LocalScript: AutoFarmATM (StarterPlayerScripts)
 -- กลับไปใช้แบบเดินไปยังตู้แรกที่พร้อม และเปลี่ยนเป้าหมายหากตู้ถูกใช้ไปก่อนถึง
 
 local Players = game:GetService("Players")
