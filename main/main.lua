@@ -1,5 +1,5 @@
 -- LocalScript: AutoFarmATM (StarterPlayerScripts)
--- เวอร์ชันไม่ใช้ loop: ตรวจสอบ ERROR ด้วย event ทันที
+-- เวอร์ชันใช้ loop แบบเดิม: เช็ค ATM ที่ใกล้ที่สุดและไม่แสดง ERROR
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -12,13 +12,10 @@ local rootPart = char:WaitForChild("HumanoidRootPart")
 
 local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
 
-local currentATM = nil
-local atmConnection = nil
-
 -- 🔎 ตรวจสอบว่า ATM มีข้อความ ERROR หรือไม่
 local function IsATMError(atm)
     for _, part in pairs(atm:GetDescendants()) do
-        if part:IsA("TextLabel") and string.find(string.upper(part.Text), "ERROR") then
+        if part:IsA("TextLabel") and part.Text and string.find(string.upper(part.Text), "ERROR") then
             return true
         end
     end
@@ -68,35 +65,13 @@ local function WalkToATM(atm)
     end
 end
 
--- 📡 ติดตามการเปลี่ยนข้อความบนหน้าจอ ATM เพื่อเปลี่ยนทันทีเมื่อเจอ ERROR
-local function MonitorATMError(atm)
-    if atmConnection then
-        atmConnection:Disconnect()
-        atmConnection = nil
+-- 🔁 วนลูปฟาร์ม ATM
+while true do
+    local atm = FindNearestATM()
+    if atm then
+        WalkToATM(atm)
+    else
+        warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่ใกล้ที่สุด")
     end
-    for _, part in pairs(atm:GetDescendants()) do
-        if part:IsA("TextLabel") and part.Text then
-            atmConnection = part:GetPropertyChangedSignal("Text"):Connect(function()
-                if string.find(string.upper(part.Text), "ERROR") then
-                    warn("[⚠️ ATM] พบ ERROR ที่", atm:GetFullName())
-                    local newATM = FindNearestATM()
-                    if newATM and newATM ~= atm then
-                        currentATM = newATM
-                        WalkToATM(currentATM)
-                        MonitorATMError(currentATM)
-                    end
-                end
-            end)
-            break
-        end
-    end
-end
-
--- 🚀 เริ่มฟาร์ม ATM แบบ event-driven
-currentATM = FindNearestATM()
-if currentATM then
-    WalkToATM(currentATM)
-    MonitorATMError(currentATM)
-else
-    warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่ใกล้ที่สุด")
+    task.wait(10)
 end
