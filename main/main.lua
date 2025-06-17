@@ -136,17 +136,21 @@ local function WalkToATM(atm)
     end)
 
     if not success or path.Status ~= Enum.PathStatus.Success then
-        warn("[❌ AutoFarmATM] Failed to compute path! Status:", path.Status.Name, "Error:", errorMessage or "N/A")
-        if not humanoid.Seat then -- Only reset WalkSpeed if not in vehicle
-            humanoid.WalkSpeed = humanoid.WalkSpeed -- Should be originalWalkSpeed, but it's not captured yet outside the loop.
-                                                   -- This is a fallback; the main reset is at the end of the function.
-        end
+        warn(string.format("[❌ AutoFarmATM] Failed to compute path! Status: %s. Error: %s", path.Status.Name, errorMessage or "N/A"))
         ClearPathVisualization() -- Clear path on Pathfinding failure
         moving = false
         return
     end
 
     local waypoints = path:GetWaypoints()
+    
+    if not waypoints or #waypoints == 0 then
+        warn("[❌ AutoFarmATM] Path computed successfully but returned no waypoints!")
+        ClearPathVisualization()
+        moving = false
+        return
+    end
+
     DrawPath(waypoints) -- Draw the path visualization
 
     -- Check if the player is in a vehicle (VehicleSeat)
