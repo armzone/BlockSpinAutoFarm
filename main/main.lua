@@ -27,9 +27,7 @@ local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChi
 local currentATM = nil
 local moving = false
 
-local manualOverride = false
-local lastManualMoveTime = 0
-local OVERRIDE_TIMEOUT = 5 
+
 
 --// Functions
 
@@ -57,12 +55,7 @@ local function BindCharacter()
             humanoid.WalkSpeed = _G.WalkSpeedOverride or autoSpeed
         end
 
-        if not moving and humanoid.MoveDirection.Magnitude > 0 then
-            if not manualOverride then
-                print("[AutoFarmATM] 🎮 ผู้เล่นควบคุมเอง, สคริปต์หยุดทำงานชั่วคราว")
-            end
-            manualOverride = true
-            lastManualMoveTime = tick()
+        
         end
     end)
 end
@@ -124,11 +117,10 @@ local function WalkToATM(atm)
             
             local success = humanoid.MoveToFinished:Wait(8)
             if not success then
-                print("[AutoFarmATM] 🎮 การเคลื่อนที่ถูกขัดจังหวะโดยผู้เล่น, หยุดทำงานชั่วคราว")
-                manualOverride = true
-                lastManualMoveTime = tick()
+                print("[AutoFarmATM] ⚠️ การเคลื่อนที่ล้มเหลวที่ waypoint #" .. i)
                 moving = false
                 return
+            end
             end
         end
         print("[AutoFarmATM] ✨ ถึงที่หมายแล้ว!")
@@ -163,7 +155,7 @@ while task.wait(1) do
         manualOverride = false
     end
 
-    if not moving and not manualOverride and humanoid and rootPart then
+    if not moving and humanoid and rootPart then
         local atm = FindNearestReadyATM()
         if atm then
             WalkToATM(atm)
