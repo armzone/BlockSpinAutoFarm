@@ -4,17 +4,17 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
-local UserInputService = game:GetService("UserInputService") -- ใช้สำหรับจำลองการกดปุ่ม (อาจไม่ทำงานเสมอไป)
-local TweenService = game:GetService("TweenService") -- เพิ่ม TweenService
+local UserInputService = game:GetService("UserInputService") -- Used for simulating key presses (may not always work)
+local TweenService = game:GetService("TweenService") -- Added TweenService
 
--- ตรวจสอบให้แน่ใจว่า LocalPlayer โหลดแล้ว
+-- Ensure LocalPlayer is loaded
 local player = Players.LocalPlayer
 if not player then
-    warn("[AutoFarmATM] LocalPlayer ไม่พร้อมใช้งาน!")
-    return -- หยุดสคริปต์หาก LocalPlayer ไม่พร้อม
+    warn("[AutoFarmATM] LocalPlayer is not available!")
+    return -- Stop script if LocalPlayer is not ready
 end
 
--- รอให้ Character และ Humanoid โหลดสมบูรณ์
+-- Wait for Character and Humanoid to load completely
 local char = player.Character or player.CharacterAdded:Wait()
 local humanoid = char:WaitForChild("Humanoid")
 local rootPart = char:WaitForChild("HumanoidRootPart")
@@ -24,7 +24,30 @@ local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChi
 local currentATM = nil
 local moving = false
 
--- 🔎 ตรวจสอบว่า ATM พร้อมใช้งาน (ProximityPrompt.Enabled == true)
+-- Raycast parameters for ground detection
+local raycastParams = RaycastParams.new()
+raycastParams.FilterDescendantsInstances = {char} -- Exclude character itself
+raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+-- Function to get the Y-coordinate of the ground at a given X,Z position
+local function getGroundY(position)
+    -- Start ray slightly above the position to ensure it hits the ground
+    local origin = Vector3.new(position.X, position.Y + 50, position.Z)
+    local direction = Vector3.new(0, -100, 0) -- Cast downwards
+    
+    local raycastResult = workspace:Raycast(origin, direction, raycastParams)
+    
+    if raycastResult and raycastResult.Position then
+        return raycastResult.Position.Y
+    end
+    -- Fallback: If no ground found, use the original Y.
+    -- This might happen if the waypoint is off the map or in the air.
+    warn("[AutoFarmATM] No ground found at position:", position)
+    return position.Y 
+end
+
+
+-- 🔎 Check if ATM is ready (ProximityPrompt.Enabled == true)
 local function IsATMReady(atm)
     local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
     if prompt then
@@ -33,19 +56,19 @@ local function IsATMReady(atm)
     return false
 end
 
--- 🔍 ค้นหา ATM ตัวแรกที่พร้อมใช้งาน
+-- 🔍 Find the first available ATM
 local function FindNearestReadyATM()
     local nearestATM = nil
     local shortestDist = math.huge
     for _, atm in pairs(ATMFolder:GetChildren()) do
-        -- ตรวจสอบว่าเป็น Model หรือ BasePart ก่อนคำนวณตำแหน่ง เพื่อป้องกันข้อผิดพลาด
+        -- Check if it's a Model or BasePart before calculating position to prevent errors
         if not (atm:IsA("Model") or atm:IsA("BasePart")) then
-            continue -- ข้ามวัตถุที่ไม่ใช่ Model หรือ Part
+            continue -- Skip objects that are not Models or Parts
         end
 
         local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
         local dist = (pos - rootPart.Position).Magnitude
-        -- print("[ATM] =>", atm:GetFullName(), " | ระยะ =", math.floor(dist), "| พร้อมใช้งาน:", IsATMReady(atm)) -- บรรทัด Debugging
+        -- print("[ATM] =>", atm:GetFullName(), " | Distance =", math.floor(dist), "| Ready:", IsATMReady(atm)) -- Debugging line
         
         if IsATMReady(atm) and dist < shortestDist then
             shortestDist = dist
@@ -55,17 +78,12 @@ local function FindNearestReadyATM()
     return nearestATM
 end
 
--- 🧭 เดินไปยัง ATM โดยใช้ Pathfinding และ TweenService
+-- 🧭 Move to ATM using Pathfinding and optionally TweenService or VehicleSeat
 local function WalkToATM(atm)
     if not atm then return end
     moving = true
     currentATM = atm
     local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
-
-    -- ไม่ต้องปรับ WalkSpeed เนื่องจากเราจะใช้ TweenService ในการเคลื่อนที่โดยตรง
-    -- local originalWalkSpeed = humanoid.WalkSpeed
-    -- humanoid.WalkSpeed = 30
-    -- print(string.format("[AutoFarmATM] ตั้งค่า WalkSpeed เป็น %.1f", humanoid.WalkSpeed))
 
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
@@ -78,118 +96,194 @@ local function WalkToATM(atm)
     path:ComputeAsync(rootPart.Position, targetPos)
 
     if path.Status == Enum.PathStatus.Success then
-        print("[✅ AutoFarmATM] เดินไปยัง ATM โดยใช้ TweenService =>", atm:GetFullName())
-
-        -- ตั้งค่า Humanoid ให้เป็น PlatformStand ชั่วคราวเพื่อจัดการเรื่องฟิสิกส์ระหว่าง Tween
-        -- สิ่งนี้จะทำให้ตัวละครไม่ถูกแรงโน้มถ่วงหรือการเคลื่อนที่ภายใน Humanoid รบกวน
-        humanoid.PlatformStand = true
-        
         local waypoints = path:GetWaypoints()
+
+        -- Check if the player is in a vehicle (VehicleSeat)
+        local vehicleSeat = nil
+        if humanoid.Seat and humanoid.Seat:IsA("VehicleSeat") then
+            vehicleSeat = humanoid.Seat
+            print("[✅ AutoFarmATM] Moving by vehicle to ATM =>", atm:GetFullName())
+            -- Disable PlatformStand if it was active from a previous run or for some reason
+            humanoid.PlatformStand = false
+        else
+            print("[✅ AutoFarmATM] Walking (TweenService) to ATM =>", atm:GetFullName())
+            -- Set Humanoid to PlatformStand temporarily to manage physics during Tween
+            humanoid.PlatformStand = true
+        end
+
         for i, waypoint in ipairs(waypoints) do
-            -- ระหว่างเดิน เช็คว่า ATM ยังพร้อมอยู่หรือไม่ และว่าผู้เล่นยังมีชีวิตอยู่หรือไม่
+            -- During movement, check if ATM is still ready and if player is alive
             if not IsATMReady(currentATM) or not humanoid.Parent then
-                print("[⚠️] ATM ถูกใช้ไปแล้วหรือผู้เล่นตาย → หาตู้ใหม่")
-                humanoid.PlatformStand = false -- คืนค่า PlatformStand
+                print("[⚠️] ATM used or player died → Finding new ATM")
+                if not vehicleSeat then
+                    humanoid.PlatformStand = false -- Revert PlatformStand for walking
+                end
                 moving = false
                 return
             end
 
-            local startCFrame = rootPart.CFrame
-            
-            -- คำนวณ CFrame เป้าหมาย รวมถึงการหมุนตัวให้หันไปทาง Waypoint ถัดไป
-            local lookAtPosition = waypoint.Position
-            if i + 1 <= #waypoints then
-                -- หากไม่ใช่ Waypoint สุดท้าย ให้หันหน้าไปทาง Waypoint ถัดไป
-                lookAtPosition = waypoints[i+1].Position 
+            if vehicleSeat then
+                -- Vehicle movement logic
+                local vehicleModel = vehicleSeat.Parent -- Assuming VehicleSeat is directly under the vehicle model
+                if not vehicleModel or not vehicleModel.PrimaryPart then
+                    warn("[❌ AutoFarmATM] Vehicle model or PrimaryPart not found.")
+                    moving = false
+                    return
+                end
+                
+                local primaryPart = vehicleModel.PrimaryPart
+                local lookAtPosition = waypoint.Position
+
+                local loopStartTime = os.clock()
+                local maxWaypointTime = 10 -- Max time to reach a waypoint for vehicle
+
+                repeat
+                    -- Re-check conditions inside the loop for responsiveness
+                    if not IsATMReady(currentATM) or not humanoid.Parent then
+                        print("[⚠️] ATM used or player died during vehicle movement → Finding new ATM")
+                        vehicleSeat.Throttle = 0
+                        vehicleSeat.Steer = 0
+                        moving = false
+                        return
+                    end
+
+                    -- Calculate direction to waypoint
+                    local direction = (lookAtPosition - primaryPart.Position).Unit
+                    local dotProduct = primaryPart.CFrame.lookVector:Dot(direction)
+                    
+                    -- Calculate steering angle (simplified)
+                    local rightVector = primaryPart.CFrame.rightVector
+                    local angleDot = rightVector:Dot(direction)
+                    
+                    if dotProduct > 0.95 then -- Mostly facing waypoint
+                        vehicleSeat.Steer = 0
+                    elseif angleDot > 0 then -- Waypoint is to the right
+                        vehicleSeat.Steer = 1
+                    else -- Waypoint is to the left
+                        vehicleSeat.Steer = -1
+                    end
+
+                    vehicleSeat.Throttle = 1 -- Full forward throttle
+
+                    task.wait(0.1) -- Update every 0.1 seconds
+                until (primaryPart.Position - waypoint.Position).Magnitude < waypoint.DistanceFromPrevious + 5 or os.clock() - loopStartTime > maxWaypointTime
+
+                -- Stop vehicle at waypoint if needed or prepare for next
+                vehicleSeat.Throttle = 0 -- Stop momentarily at waypoint to ensure proper turn
+                vehicleSeat.Steer = 0
+                task.wait(0.5) -- Small pause to allow vehicle to stabilize
+                
             else
-                -- หากเป็น Waypoint สุดท้าย ให้หันหน้าไปทางเป้าหมาย ATM สุดท้าย
-                lookAtPosition = targetPos 
-            end
+                -- Humanoid (walking) movement logic using TweenService
+                local startCFrame = rootPart.CFrame
+                
+                -- Get the ground Y at the current waypoint's X,Z position
+                local groundY = getGroundY(waypoint.Position)
+                -- Adjust the waypoint's Y position to be on the ground, considering HipHeight
+                local adjustedWaypointPosition = Vector3.new(waypoint.Position.X, groundY + humanoid.HipHeight, waypoint.Position.Z)
 
-            -- สร้าง CFrame เป้าหมายสำหรับการเคลื่อนที่และการหมุนตัว
-            -- การใช้ CFrame.new(position, lookAt) จะจัดการการหมุนตัวให้หันไปทาง lookAt
-            local targetCFrame = CFrame.new(waypoint.Position, lookAtPosition)
+                -- Calculate target CFrame, including rotation to face the next Waypoint
+                -- The lookAtPosition should also be adjusted to ground level for natural looking
+                local lookAtPosition = adjustedWaypointPosition 
+                if i + 1 <= #waypoints then
+                    local nextWaypointGroundY = getGroundY(waypoints[i+1].Position)
+                    lookAtPosition = Vector3.new(waypoints[i+1].Position.X, nextWaypointGroundY + humanoid.HipHeight, waypoints[i+1].Position.Z)
+                else
+                    local finalTargetGroundY = getGroundY(targetPos)
+                    lookAtPosition = Vector3.new(targetPos.X, finalTargetGroundY + humanoid.HipHeight, targetPos.Z)
+                end
 
-            -- คำนวณระยะทางเพื่อกำหนดระยะเวลา Tween ให้ความเร็วคงที่
-            local distance = (rootPart.Position - waypoint.Position).Magnitude
-            local desiredSpeed = 30 -- กำหนดความเร็ว (studs per second)
-            local duration = distance / desiredSpeed 
-            if duration < 0.1 then duration = 0.1 end -- กำหนดระยะเวลาขั้นต่ำเพื่อป้องกันการกระพริบ
+                -- Create target CFrame for movement and rotation
+                local targetCFrame = CFrame.new(adjustedWaypointPosition, lookAtPosition)
 
-            local tweenInfo = TweenInfo.new(
-                duration,                   -- เวลาที่ใช้ในการ Tween
-                Enum.EasingStyle.Linear,    -- รูปแบบการเร่ง/ลดความเร็ว (Linear คือความเร็วคงที่)
-                Enum.EasingDirection.Out,   -- ทิศทางการเร่ง/ลดความเร็ว
-                0,                          -- จำนวนครั้งที่ทำซ้ำ
-                false,                      -- ไม่ย้อนกลับ
-                0                           -- หน่วงเวลาก่อนเริ่ม
-            )
+                -- Calculate distance for Tween duration to maintain consistent speed
+                local distance = (rootPart.Position - adjustedWaypointPosition).Magnitude -- Use adjusted position for distance
+                local desiredSpeed = 30 -- Define desired speed (studs per second)
+                local duration = distance / desiredSpeed 
+                if duration < 0.1 then duration = 0.1 end -- Set minimum duration to prevent flickering
 
-            local tween = TweenService:Create(rootPart, tweenInfo, {CFrame = targetCFrame})
-            tween:Play()
-            
-            -- รอให้ Tween จบ หรือถูกขัดจังหวะ (เช่น ผู้เล่นตาย หรือ ATM ไม่พร้อม)
-            local tweenFinished = false
-            local connection
-            connection = tween.Completed:Connect(function()
-                tweenFinished = true
-                connection:Disconnect()
-            end)
+                local tweenInfo = TweenInfo.new(
+                    duration,                   -- Time to take for Tween
+                    Enum.EasingStyle.Linear,    -- Easing style (Linear is constant speed)
+                    Enum.EasingDirection.Out,   -- Easing direction
+                    0,                          -- Number of repeats
+                    false,                      -- Does not reverse
+                    0                           -- Delay before start
+                )
 
-            -- Loop ตรวจสอบเงื่อนไขระหว่าง Tween
-            local loopStartTime = os.clock()
-            while not tweenFinished and os.clock() - loopStartTime < duration + 0.5 do -- เพิ่มเวลาเผื่อเล็กน้อย
-                if not IsATMReady(currentATM) or not humanoid.Parent then
-                    print("[⚠️] ATM ถูกใช้ไปแล้วหรือผู้เล่นตายระหว่าง Tween → หาตู้ใหม่")
-                    tween:Cancel() -- ยกเลิก Tween ปัจจุบัน
-                    humanoid.PlatformStand = false -- คืนค่า PlatformStand
+                local tween = TweenService:Create(rootPart, tweenInfo, {CFrame = targetCFrame})
+                tween:Play()
+                
+                -- Wait for Tween to complete or be interrupted (e.g., player dies or ATM not ready)
+                local tweenFinished = false
+                local connection
+                connection = tween.Completed:Connect(function()
+                    tweenFinished = true
+                    connection:Disconnect()
+                end)
+
+                -- Loop to check conditions during Tween
+                local loopStartTime = os.clock()
+                while not tweenFinished and os.clock() - loopStartTime < duration + 0.5 do -- Add buffer time
+                    if not IsATMReady(currentATM) or not humanoid.Parent then
+                        print("[⚠️] ATM used or player died during Tween → Finding new ATM")
+                        tween:Cancel() -- Cancel current Tween
+                        humanoid.PlatformStand = false -- Revert PlatformStand
+                        moving = false
+                        if connection then connection:Disconnect() end
+                        return
+                    end
+                    task.wait(0.05) -- Check every 0.05 seconds
+                end
+                if not tweenFinished then -- If Tween does not complete within allotted time (might be stuck)
+                    warn("[❌ AutoFarmATM] Tween to Waypoint failed to complete in time")
+                    tween:Cancel()
+                    humanoid.PlatformStand = false
                     moving = false
                     if connection then connection:Disconnect() end
                     return
                 end
-                task.wait(0.05) -- ตรวจสอบทุก 0.05 วินาที
-            end
-            if not tweenFinished then -- ถ้า Tween ไม่จบภายในเวลาที่กำหนด (อาจค้าง)
-                warn("[❌ AutoFarmATM] Tween ถึง Waypoint ไม่สำเร็จภายในเวลาที่กำหนด")
-                tween:Cancel()
-                humanoid.PlatformStand = false
-                moving = false
-                if connection then connection:Disconnect() end
-                return
-            end
+            end -- End of if vehicleSeat / else
+        end -- End of waypoint loop
+
+        print("[✅ AutoFarmATM] Arrived at ATM:", atm:GetFullName())
+
+        -- Revert Humanoid from PlatformStand if walking
+        if not vehicleSeat then
+            humanoid.PlatformStand = false
+        else
+            vehicleSeat.Throttle = 0 -- Stop vehicle completely upon arrival
+            vehicleSeat.Steer = 0
         end
-
-        print("[✅ AutoFarmATM] ถึง ATM แล้ว:", atm:GetFullName())
-
-        -- คืนค่า Humanoid จาก PlatformStand เมื่อการเคลื่อนที่เสร็จสิ้น
-        humanoid.PlatformStand = false
 
         local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
-            print("[AutoFarmATM] พบ ProximityPrompt บน ATM แต่ต้องมีการกดปุ่มหรือ RemoteEvent เพื่อกระตุ้น")
-            -- ตัวอย่างการจำลองการกดปุ่ม ProximityPrompt (อาจไม่น่าเชื่อถือเสมอไป):
-            -- UserInputService:SimulateKeyPress(Enum.KeyCode.E) -- หากปุ่มกระตุ้นคือ E
+            print("[AutoFarmATM] Found ProximityPrompt on ATM, but requires button press or RemoteEvent to activate.")
+            -- Example of simulating a ProximityPrompt button press (may not be reliable):
+            -- UserInputService:SimulateKeyPress(Enum.KeyCode.E) -- If activation key is E
         end
 
     else
-        warn("[❌ AutoFarmATM] ไม่สามารถคำนวณ path ได้! สถานะ:", path.Status.Name)
-        humanoid.PlatformStand = false -- ตรวจสอบให้แน่ใจว่า PlatformStand ถูกรีเซ็ตหาก Pathfinding ล้มเหลว
+        warn("[❌ AutoFarmATM] Failed to compute path! Status:", path.Status.Name)
+        if not vehicleSeat then
+            humanoid.PlatformStand = false -- Ensure PlatformStand is reset if Pathfinding fails
+        end
     end
     moving = false
 end
 
--- 🔁 ลูปฟาร์ม ATM แบบเรียบง่าย: เลือกตู้แรกที่พร้อม
+-- 🔁 Simple ATM farm loop: Select the first available ATM
 while true do
-    if not moving and humanoid.Parent then -- ตรวจสอบว่าผู้เล่นยังมีชีวิตอยู่
+    if not moving and humanoid.Parent then -- Check if player is alive
         local atm = FindNearestReadyATM()
         if atm then
             WalkToATM(atm)
         else
-            warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่พร้อมใช้งาน")
+            warn("[AutoFarmATM] ❌ No ready ATM found")
         end
     elseif not humanoid.Parent then
-        warn("[AutoFarmATM] ผู้เล่นเสียชีวิต หรือ Humanoid/Character หายไป หยุดการทำงาน")
-        break -- ออกจากลูปเมื่อผู้เล่นตาย
+        warn("[AutoFarmATM] Player died or Humanoid/Character missing. Stopping.")
+        break -- Exit loop if player dies
     end
     task.wait(3)
 end
