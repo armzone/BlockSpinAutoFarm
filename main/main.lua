@@ -6,7 +6,7 @@ local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService") -- ใช้สำหรับจำลองการกดปุ่ม (อาจไม่ทำงานเสมอไป)
 
-local player = Players:GetLocalPlayer() -- ใช้ GetLocalPlayer() แทน LocalPlayer
+local player = Players:LocalPlayer() -- ใช้ GetLocalPlayer() แทน LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
 local humanoid = char:WaitForChild("Humanoid")
 local rootPart = char:WaitForChild("HumanoidRootPart")
