@@ -1,5 +1,5 @@
--- Tween Walk Hybrid (Safe Slow)
--- ปรับให้ความเร็วต่ำลง และเคลื่อนที่ช้าเพื่อลดโอกาสถูกตรวจจับ Teleport
+-- Tween Walk Hybrid (Safe + Physics Lock)
+-- ป้องกันตัวละครหลุดร่างโดยใช้ HRP.Anchored และ TweenService ชั่วคราว
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -40,11 +40,13 @@ local function SafeTweenTo(position, speed)
     local goal = Vector3.new(position.X, adjustedY, position.Z)
     local distance = (rootPart.Position - goal).Magnitude
     local duration = distance / speed
-    if duration < 0.2 then duration = 0.2 end -- เพิ่มเวลาให้พอดีสำหรับ tween
+    if duration < 0.2 then duration = 0.2 end
 
+    rootPart.Anchored = true -- 🔒 ล็อคตำแหน่งก่อน Tween เพื่อป้องกันฟิสิกส์หลุด
     local tween = TweenService:Create(rootPart, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Position = goal})
     tween:Play()
     tween.Completed:Wait()
+    rootPart.Anchored = false -- 🔓 คืนค่าหลังจบ Tween
 end
 
 local function WalkToATM(atm)
@@ -70,7 +72,7 @@ local function WalkToATM(atm)
                 moving = false
                 return
             end
-            SafeTweenTo(wp.Position, 40) -- ลดความเร็ว tween ลงเพื่อไม่ให้โดนตรวจจับ
+            SafeTweenTo(wp.Position, 35) -- ช้าลงอีกนิดเพื่อเนียนกว่า
         end
         print("[TweenWalk] ถึง ATM แล้ว")
         local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
