@@ -7,6 +7,8 @@
     - เพิ่มระบบ Manual Override
     - [ใหม่] เพิ่มตัวเลือกให้สามารถปรับ WalkSpeed เองได้
     - [สำคัญ] เพิ่มการโต้ตอบกับ ProximityPrompt
+
+    **การทำงานหลักของสคริปต์นี้จะวนอยู่รอบฟังก์ชัน 'FindNearestReadyATM' และ 'WalkToATM'**
 ]]
 
 --// Services
@@ -41,6 +43,7 @@ end
 
 --// Functions
 
+-- ฟังก์ชันสำหรับผูกตัวละครและจัดการคุณสมบัติ (เช่น WalkSpeed, Manual Override)
 local function BindCharacter()
     char = player.Character or player.CharacterAdded:Wait()
     humanoid = char:WaitForChild("Humanoid")
@@ -87,12 +90,14 @@ local function BindCharacter()
     end)
 end
 
+-- ฟังก์ชันช่วยตรวจสอบว่า ATM พร้อมใช้งานหรือไม่
 local function IsATMReady(atm)
     if not atm or not atm.Parent then return false end
     local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
     return prompt and prompt.Enabled and prompt.ActionText ~= "Used" -- อาจมีข้อความ "Used" เมื่อไม่พร้อมใช้
 end
 
+-- ฟังก์ชันหลัก: ค้นหา ATM ที่ใกล้ที่สุดและพร้อมใช้งาน
 local function FindNearestReadyATM()
     local nearestATM = nil
     local shortestDist = math.huge
@@ -108,9 +113,6 @@ local function FindNearestReadyATM()
             if IsATMReady(atm) and dist < shortestDist then
                 shortestDist = dist
                 nearestATM = atm
-            else
-                -- ลบข้อความที่ไม่จำเป็นออก เพื่อให้แสดงเฉพาะ ATM ที่พร้อมใช้งาน
-                -- print("[⛔] ATM ยังไม่พร้อมใช้งานหรือไกลกว่า")
             end
         end
     end
@@ -123,6 +125,7 @@ local function FindNearestReadyATM()
     return nearestATM
 end
 
+-- ฟังก์ชันช่วย: โต้ตอบกับ ProximityPrompt ของ ATM
 local function InteractWithATM(atm)
     local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
     if prompt and prompt.Enabled then
@@ -150,6 +153,7 @@ local function InteractWithATM(atm)
     return false
 end
 
+-- ฟังก์ชันหลัก: เดินไปยัง ATM และจัดการการโต้ตอบ
 local function WalkToATM(atm)
     if not atm or not humanoid or not rootPart then return end
     
@@ -251,11 +255,11 @@ while task.wait(0.5) do -- ลด delay ในการวนลูปหลั�
     end
 
     if not moving and humanoid and rootPart then
-        local atm = FindNearestReadyATM()
+        local atm = FindNearestReadyATM() -- เรียกฟังก์ชันหา ATM
         if atm then
-            WalkToATM(atm)
+            WalkToATM(atm) -- เรียกฟังก์ชันเดินไปหา ATM และโต้ตอบ
         else
-            -- log("🔍 ไม่พบ ATM ที่พร้อมใช้งาน, กำลังรอ...") -- FindNearestReadyATM จะ log ให้เองแล้ว
+            -- FindNearestReadyATM จะ log ให้เองแล้วว่าไม่พบ ATM
         end
     end
 end
