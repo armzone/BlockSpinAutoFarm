@@ -25,26 +25,30 @@ local function IsATMReady(atm)
 end
 
 -- 🔍 ค้นหา ATM ตัวแรกที่พร้อมใช้งาน
-local function FindAvailableATM()
+local function FindNearestReadyATM()
+    local nearestATM = nil
+    local shortestDist = math.huge
     for index, atm in pairs(ATMFolder:GetChildren()) do
         local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
-        print("[ATM ลำดับ " .. index .. "] =>", atm:GetFullName())
-        if IsATMReady(atm) then
-            print("[✅] เจอ ATM ที่พร้อมใช้งาน")
-            return atm
+        local dist = (pos - rootPart.Position).Magnitude
+        print("[ATM ลำดับ " .. index .. "] =>", atm:GetFullName(), " | ระยะ =", math.floor(dist))
+        if IsATMReady(atm) and dist < shortestDist then
+            shortestDist = dist
+            nearestATM = atm
         else
-            print("[⛔] ATM ยังไม่พร้อมใช้งาน")
+            print("[⛔] ATM ยังไม่พร้อมใช้งานหรือไกลกว่า")
         end
     end
-    return nil
+    return nearestATM
 end
 
--- 🧭 เดินไปยัง ATM โดยใช้ Pathfinding
+-- 🧭 เดินไปยัง ATM โดยใช้ Pathfinding (สามารถทะลุสิ่งที่ CanCollide = false ได้)
 local function WalkToATM(atm)
     if not atm then return end
     moving = true
     currentATM = atm
     local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
+
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
         AgentHeight = 5,
@@ -52,6 +56,15 @@ local function WalkToATM(atm)
         AgentCanClimb = true,
         WaypointSpacing = 4
     })
+
+    -- เคลียร์ obstacles ที่ทะลุได้
+    for _, part in pairs(Workspace:GetDescendants()) do
+        if part:IsA("BasePart") and not part.CanCollide then
+            part.LocalTransparencyModifier = 0.9 -- debug
+            part.CanQuery = false
+        end
+    end
+
     path:ComputeAsync(rootPart.Position, targetPos)
     if path.Status == Enum.PathStatus.Success then
         print("[✅ AutoFarmATM] เดินไปยัง ATM =>", atm:GetFullName())
@@ -74,7 +87,7 @@ end
 -- 🔁 ลูปฟาร์ม ATM แบบเรียบง่าย: เลือกตู้แรกที่พร้อม
 while true do
     if not moving then
-        local atm = FindAvailableATM()
+        local atm = FindNearestReadyATM()
         if atm then
             WalkToATM(atm)
         else
