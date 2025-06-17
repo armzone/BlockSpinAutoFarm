@@ -1,6 +1,5 @@
--- ใน main.lua
 print("AutoFarm Loaded ✅")
--- โค้ด autofarm ทั้งหมดตรงนี้
+
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
