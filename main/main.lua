@@ -1,5 +1,5 @@
 -- LocalScript: AutoFarmATM (StarterPlayerScripts)
--- เวอร์ชันแยก ATM อย่างชัดเจน และตรวจสอบตลอดเวลาว่ามี ATM ใหม่ที่ใกล้กว่าหรือไม่
+-- กลับไปใช้แบบเดินไปยังตู้แรกที่พร้อม และเปลี่ยนเป้าหมายหากตู้ถูกใช้ไปก่อนถึง
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -15,40 +15,28 @@ local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChi
 local currentATM = nil
 local moving = false
 
--- 🔎 ตรวจสอบว่า ATM มีข้อความ ERROR หรือไม่
-local function IsATMError(atm)
+-- 🔎 ตรวจสอบว่า ATM พร้อมใช้งาน (ProximityPrompt.Enabled == true)
+local function IsATMReady(atm)
     local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
     if prompt then
-        if not prompt.Enabled then
-            print("[⚠️ ATM] ปิดการใช้งาน ProximityPrompt => ถือว่า Error:", atm:GetFullName())
-            return true
-        else
-            print("[✅ ATM] ProximityPrompt เปิดใช้งาน:", atm:GetFullName())
-        end
-    else
-        print("[⚠️ ATM] ไม่พบ ProximityPrompt ใน:", atm:GetFullName())
-        return true
+        return prompt.Enabled
     end
     return false
 end
 
--- 🔍 ค้นหา ATM ที่ใกล้ที่สุด (ที่ไม่ Error)
-local function FindNearestATM()
-    local nearestATM = nil
-    local shortestDist = math.huge
+-- 🔍 ค้นหา ATM ตัวแรกที่พร้อมใช้งาน
+local function FindAvailableATM()
     for index, atm in pairs(ATMFolder:GetChildren()) do
         local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
-        local dist = (pos - rootPart.Position).Magnitude
-        print("[ATM ลำดับ " .. index .. "] =>", atm:GetFullName(), " | ระยะ =", math.floor(dist))
-
-        if not IsATMError(atm) and dist < shortestDist then
-            shortestDist = dist
-            nearestATM = atm
+        print("[ATM ลำดับ " .. index .. "] =>", atm:GetFullName())
+        if IsATMReady(atm) then
+            print("[✅] เจอ ATM ที่พร้อมใช้งาน")
+            return atm
         else
-            print("[⛔] ข้าม ATM ที่ Error หรือไกลกว่า")
+            print("[⛔] ATM ยังไม่พร้อมใช้งาน")
         end
     end
-    return nearestATM
+    return nil
 end
 
 -- 🧭 เดินไปยัง ATM โดยใช้ Pathfinding
@@ -68,17 +56,11 @@ local function WalkToATM(atm)
     if path.Status == Enum.PathStatus.Success then
         print("[✅ AutoFarmATM] เดินไปยัง ATM =>", atm:GetFullName())
         for _, waypoint in ipairs(path:GetWaypoints()) do
-            -- ระหว่างเดิน ให้เช็คว่ามีตู้ใหม่ที่ใกล้กว่าไหม
-            local newATM = FindNearestATM()
-            if newATM and newATM ~= currentATM then
-                local newPos = newATM:IsA("Model") and newATM:GetModelCFrame().Position or newATM.Position
-                local distNew = (newPos - rootPart.Position).Magnitude
-                local distCur = (targetPos - rootPart.Position).Magnitude
-                if distNew + 2 < distCur then -- ถ้าใหม่ใกล้กว่ามาก
-                    print("[🔁] เจอ ATM ใหม่ที่ใกล้กว่า → เปลี่ยนเป้าหมาย")
-                    WalkToATM(newATM)
-                    return
-                end
+            -- ระหว่างเดิน เช็คว่า ATM ยังพร้อมอยู่หรือไม่
+            if not IsATMReady(currentATM) then
+                print("[⚠️] ATM ถูกใช้ไปแล้ว → หาตู้ใหม่")
+                moving = false
+                return
             end
             humanoid:MoveTo(waypoint.Position)
             humanoid.MoveToFinished:Wait()
@@ -89,15 +71,15 @@ local function WalkToATM(atm)
     moving = false
 end
 
--- 🔁 ลูปฟาร์ม ATM แบบตรวจสอบอย่างต่อเนื่อง
+-- 🔁 ลูปฟาร์ม ATM แบบเรียบง่าย: เลือกตู้แรกที่พร้อม
 while true do
     if not moving then
-        local atm = FindNearestATM()
+        local atm = FindAvailableATM()
         if atm then
             WalkToATM(atm)
         else
-            warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่ใกล้ที่สุด")
+            warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่พร้อมใช้งาน")
         end
     end
-    task.wait(5)
+    task.wait(3)
 end
