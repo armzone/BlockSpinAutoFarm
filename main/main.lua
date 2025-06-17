@@ -3,6 +3,8 @@
     - แก้ไข Syntax Error ในฟังก์ชัน BindCharacter
     - ลูปที่ไม่จำเป็นในฟังก์ชัน WalkToATM ซึ่งส่งผลต่อประสิทธิภาพอย่างรุนแรงออกไป
     - ปรับปรุงการทำงานให้เสถียรขึ้น
+    - [แก้ไข NoPath] ปรับ AgentRadius และ AgentHeight ให้เหมาะสมกับขนาดตัวละครมาตรฐาน
+    - [แก้ไข NoPath] ปรับตำแหน่งเป้าหมายให้สูงขึ้นเล็กน้อยเพื่อป้องกันการติดพื้น
 ]]
 
 --// Services
@@ -47,7 +49,6 @@ local function BindCharacter()
         local speed = math.clamp(16 * (estimatedFPS / 60), 16, 26)
         humanoid.WalkSpeed = speed
     end)
-    -- [!] แก้ไข: ลบวงเล็บปิด ')' และ 'end' ที่เกินมาซึ่งทำให้เกิด Syntax Error
 end
 
 -- 🔎 ตรวจสอบว่า ATM พร้อมใช้งานหรือไม่ (เช็คจาก ProximityPrompt)
@@ -69,8 +70,6 @@ local function FindNearestReadyATM()
             local pos = atm:IsA("Model") and atm:GetPivot().Position or atm.Position
             local dist = (pos - rootPart.Position).Magnitude
             
-            -- print("[ATM Info] Checking " .. atm.Name .. " | Distance: " .. math.floor(dist))
-            
             if IsATMReady(atm) and dist < shortestDist then
                 shortestDist = dist
                 nearestATM = atm
@@ -90,20 +89,18 @@ local function WalkToATM(atm)
     
     moving = true
     currentATM = atm
-    local targetPos = atm:IsA("Model") and atm:GetPivot().Position or atm.Position
+    
+    -- [แก้ไข NoPath] ปรับตำแหน่งเป้าหมายให้สูงขึ้น 3 studs เพื่อให้แน่ใจว่าไม่ได้อยู่ใต้พื้น
+    local targetPos = (atm:IsA("Model") and atm:GetPivot().Position or atm.Position) + Vector3.new(0, 3, 0)
 
-    -- สร้าง Path object
+    -- [แก้ไข NoPath] สร้าง Path object ด้วยขนาด Agent ที่เหมาะสมขึ้น
     local path = PathfindingService:CreatePath({
-        AgentRadius = 3,
-        AgentHeight = 6,
+        AgentRadius = 2,
+        AgentHeight = 5,
         AgentCanJump = true,
         AgentCanClimb = true,
         WaypointSpacing = 4
     })
-
-    -- [!] ปรับปรุง: ลบลูปที่เช็ค Part ทั้งหมดใน Workspace ออก
-    -- PathfindingService จะไม่สนใจ Part ที่ CanCollide = false อยู่แล้วโดยอัตโนมัติ
-    -- การใส่ลูปนี้ไว้ทำให้เกมกระตุก (Lag) อย่างรุนแรงโดยไม่จำเป็น
 
     -- คำนวณเส้นทาง
     path:ComputeAsync(rootPart.Position, targetPos)
@@ -113,7 +110,7 @@ local function WalkToATM(atm)
         local waypoints = path:GetWaypoints()
         
         for i, waypoint in ipairs(waypoints) do
-            -- ระหว่างเดิน เช็คว่า ATM ยังพร้อมอยู่หรือไม่ หรือมีเป้าหมายใหม่ที่ดีกว่า
+            -- ระหว่างเดิน เช็คว่า ATM ยังพร้อมอยู่หรือไม่
             if not IsATMReady(currentATM) then
                 print("[AutoFarmATM] ⚠️ ATM ถูกใช้ไปแล้ว, กำลังค้นหาตู้ใหม่...")
                 moving = false
@@ -124,7 +121,7 @@ local function WalkToATM(atm)
             
             -- ถ้าเป็นจุดสุดท้าย ให้รอจนกว่าจะถึงจริงๆ
             if i == #waypoints then
-                humanoid.MoveToFinished:Wait(2) -- รอ tối đa 2 วินาที
+                humanoid.MoveToFinished:Wait(2)
             end
         end
         print("[AutoFarmATM] ✨ ถึงที่หมายแล้ว!")
@@ -165,9 +162,6 @@ while task.wait(3) do
         local atm = FindNearestReadyATM()
         if atm then
             WalkToATM(atm)
-        else
-            -- ไม่ต้องแสดงคำเตือนทุกครั้งที่หาไม่เจอ อาจจะแค่รอเฉยๆ
-            -- print("[AutoFarmATM] ⏳ กำลังรอ ATM ที่พร้อมใช้งาน...")
         end
     end
 end
