@@ -15,9 +15,10 @@ local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChi
 -- 🔎 ตรวจสอบว่า ATM มีข้อความ ERROR หรือไม่
 local function IsATMError(atm)
     for _, gui in pairs(atm:GetDescendants()) do
-        if gui:IsA("SurfaceGui") and gui.Name == "Screen" then
-            local label = gui:FindFirstChild("Text")
-            if label and label:IsA("TextLabel") and string.upper(label.Text) == "ERROR" then
+        if gui:IsA("TextLabel") then
+            local raw = string.upper(gui.Text or "")
+            print("[ตรวจ ATM] =>", gui:GetFullName(), "Text =", raw)
+            if string.find(raw, "ERROR") then
                 return true
             end
         end
@@ -29,7 +30,8 @@ end
 local function FindNearestATM()
     local nearestATM = nil
     local shortestDist = math.huge
-    for _, atm in pairs(ATMFolder:GetChildren()) do
+    for index, atm in pairs(ATMFolder:GetChildren()) do
+        print("[ATM ลำดับ " .. index .. "] =>", atm:GetFullName())
         if IsATMError(atm) then
             print("[⛔] ข้าม ATM ที่ Error:", atm:GetFullName())
             continue
