@@ -101,19 +101,24 @@ local function FindNearestReadyATM()
 
     for _, atm in ipairs(ATMFolder:GetChildren()) do
         if atm:IsA("BasePart") or atm:IsA("Model") then
-            -- พยายามหาจุดที่ใกล้ที่สุดสำหรับ ATM
-            local pos = atm:FindFirstChild("ProximityPrompt", true) and atm:FindFirstChild("ProximityPrompt", true).Parent.Position or (atm:IsA("Model") and atm:GetPivot().Position or atm.Position)
+            -- พยายามหาจุดที่ใกล้ที่สุดสำหรับ ATM (ใช้ ProximityPrompt.Parent.Position ก่อน)
+            local pos = atm:FindFirstChildWhichIsA("ProximityPrompt", true) and atm:FindFirstChildWhichIsA("ProximityPrompt", true).Parent.Position or (atm:IsA("Model") and atm:GetPivot().Position or atm.Position)
             local dist = (pos - rootPart.Position).Magnitude
             
             if IsATMReady(atm) and dist < shortestDist then
                 shortestDist = dist
                 nearestATM = atm
+            else
+                -- ลบข้อความที่ไม่จำเป็นออก เพื่อให้แสดงเฉพาะ ATM ที่พร้อมใช้งาน
+                -- print("[⛔] ATM ยังไม่พร้อมใช้งานหรือไกลกว่า")
             end
         end
     end
 
     if nearestATM then
         log("✅ พบ ATM ที่พร้อมใช้งาน: " .. nearestATM:GetFullName() .. " | ระยะ: " .. math.floor(shortestDist))
+    else
+        log("🔍 ไม่พบ ATM ที่พร้อมใช้งาน, กำลังรอ...") -- เพิ่ม log หากไม่พบ ATM เลย
     end
     return nearestATM
 end
@@ -122,13 +127,8 @@ local function InteractWithATM(atm)
     local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
     if prompt and prompt.Enabled then
         log("🚀 กำลังโต้ตอบกับ ATM: " .. atm:GetFullName())
-        -- วิธีโต้ตอบกับ ProximityPrompt
-        -- 1. ใช้ VirtualInputManager (ไม่แนะนำสำหรับ ProximityPrompt โดยตรง)
-        -- VirtualInputManager:SendKeyEvent(Enum.KeyCode.E, true)
-        -- task.wait(0.1)
-        -- VirtualInputManager:SendKeyEvent(Enum.KeyCode.E, false)
-
-        -- 2. เรียกใช้ ProximityPrompt โดยตรง (วิธีที่ปลอดภัยและมีประสิทธิภาพที่สุดสำหรับสคริปต์ Local)
+        
+        -- เรียกใช้ ProximityPrompt โดยตรง (วิธีที่ปลอดภัยและมีประสิทธิภาพที่สุดสำหรับสคริปต์ Local)
         prompt:InputHoldEnd() -- จำลองการกดปุ่มจนจบ
         
         -- รอให้ ProximityPrompt ปิดหรือถูกใช้ไป
@@ -156,7 +156,8 @@ local function WalkToATM(atm)
     moving = true
     currentATM = atm
     
-    local targetPosition = atm:FindFirstChild("ProximityPrompt", true) and atm:FindFirstChild("ProximityPrompt", true).Parent.Position or ((atm:IsA("Model") and atm:GetPivot().Position or atm.Position) + Vector3.new(0, 1.5, 0))
+    -- กำหนดตำแหน่งเป้าหมายให้เป็นตำแหน่งของ ProximityPrompt.Parent ถ้ามี มิฉะนั้นใช้ตำแหน่งของ ATM
+    local targetPosition = atm:FindFirstChildWhichIsA("ProximityPrompt", true) and atm:FindFirstChildWhichIsA("ProximityPrompt", true).Parent.Position or (atm:IsA("Model") and atm:GetPivot().Position or atm.Position) + Vector3.new(0, 1.5, 0)
 
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
@@ -168,12 +169,12 @@ local function WalkToATM(atm)
     path:ComputeAsync(rootPart.Position, targetPosition)
 
     if path.Status == Enum.PathStatus.Success then
-        log("🚶 กำลังเดินไปยัง ATM => " .. atm:GetFullName())
+        log("🚶 กำลังเดินไปยัง ATM => " .. atm:GetFullName() .. " ด้วย Pathfinding.")
         local waypoints = path:GetWaypoints()
         
         for i, waypoint in ipairs(waypoints) do
             if not IsATMReady(currentATM) then
-                log("⚠️ ATM ถูกใช้ไปแล้ว, กำลังค้นหาตู้ใหม่...")
+                log("⚠️ ATM ถูกใช้ไปแล้ว, หยุดเดินและหาตู้ใหม่.")
                 moving = false
                 return
             end
@@ -191,35 +192,37 @@ local function WalkToATM(atm)
 
             if not arrived then
                 log("⚠️ การเคลื่อนที่ล้มเหลวที่ waypoint #" .. i .. ", อาจติดขัด.")
-                moving = false
-                return
+                -- ไม่มีการ return ตรงนี้ เพื่อให้ยังคงพยายามไปต่อใน waypoint ถัดไปหรือใช้ MoveTo โดยตรง
             end
         end
-        log("✨ ถึงที่หมายแล้ว!")
+        log("✨ ถึงที่หมายแล้วด้วย Pathfinding!")
 
         -- ถึงที่หมายแล้ว ลองโต้ตอบ
         InteractWithATM(atm)
     else
         warn("[AutoFarmATM] ❌ ไม่สามารถคำนวณเส้นทางได้! สถานะ:", path.Status.Name)
         log("⚠️ Pathfinding ล้มเหลว, จะพยายาม MoveTo โดยตรงไปยัง ATM ไม่ว่าระยะทางเท่าไหร่.")
+        
         moving = true -- ยังคงถือว่ากำลังเคลื่อนที่
         humanoid:MoveTo(targetPosition)
         local success = humanoid.MoveToFinished:Wait(15) -- เพิ่มเวลา Wait เนื่องจากระยะทางอาจไกล
+        
         if success then
             log("✨ MoveTo โดยตรงสำเร็จ!")
             -- ตรวจสอบระยะห่างอีกครั้งเมื่อถึงที่หมาย เพื่อให้แน่ใจว่าพร้อมโต้ตอบ
             if (rootPart.Position - targetPosition).Magnitude < INTERACT_DISTANCE * 1.5 then 
                 InteractWithATM(atm)
             else
-                log("⚠️ ถึงเป้าหมายโดยประมาณ แต่ยังไม่ใกล้พอที่จะโต้ตอบ. กำลังหา ATM ใหม่.")
-                -- หากไม่ใกล้พอ คุณอาจต้องการให้สคริปต์พยายามหา ATM ใหม่ทันที
+                log("⚠️ ถึงเป้าหมายโดยประมาณ แต่ยังไม่ใกล้พอที่จะโต้ตอบ.") 
+                -- ไม่ต้องสั่งให้หา ATM ใหม่ทันที ปล่อยให้ Main Loop ตัดสินใจใหม่
             end
         else
-            log("❌ MoveTo โดยตรงล้มเหลวหรือไม่ถึงเป้าหมายภายในเวลาที่กำหนด. กำลังหา ATM ใหม่.")
+            log("❌ MoveTo โดยตรงล้มเหลวหรือไม่ถึงเป้าหมายภายในเวลาที่กำหนด.") 
+            -- ไม่ต้องสั่งให้หา ATM ใหม่ทันที ปล่อยให้ Main Loop ตัดสินใจใหม่
         end
     end
     
-    moving = false
+    moving = false -- เมื่อฟังก์ชันนี้ทำงานเสร็จ Main Loop จะเรียก FindNearestReadyATM อีกครั้ง
 end
 
 --// Event Connections
@@ -252,7 +255,7 @@ while task.wait(0.5) do -- ลด delay ในการวนลูปหลั�
         if atm then
             WalkToATM(atm)
         else
-            log("🔍 ไม่พบ ATM ที่พร้อมใช้งาน, กำลังรอ...")
+            -- log("🔍 ไม่พบ ATM ที่พร้อมใช้งาน, กำลังรอ...") -- FindNearestReadyATM จะ log ให้เองแล้ว
         end
     end
 end
