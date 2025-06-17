@@ -1,5 +1,5 @@
 -- ModuleScript: ATMPathfinder
--- ทำหน้าที่เดินไปยัง ATM โดยใช้ PathfindingService
+-- ทำหน้าที่เดินไปยัง ATM โดยใช้ PathfindingService พร้อมตรวจสอบ error
 
 local PathfindingService = game:GetService("PathfindingService")
 local Players = game:GetService("Players")
@@ -33,7 +33,7 @@ function ATMPathfinder:WalkToATM(atm)
         end
         return true
     else
-        warn("[❌ ATMPathfinder] ไม่สามารถคำนวณ path ได้!")
+        warn("[❌ ATMPathfinder] ไม่สามารถคำนวณ path ได้! สถานะ: ", path.Status.Name)
         return false
     end
 end
