@@ -14,14 +14,9 @@ local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChi
 
 -- 🔎 ตรวจสอบว่า ATM มีข้อความ ERROR หรือไม่
 local function IsATMError(atm)
-    local screenText = atm:FindFirstChild("Part", true)
-    if screenText then
-        local screenGui = screenText:FindFirstChild("Screen")
-        if screenGui and screenGui:FindFirstChild("Text") then
-            local label = screenGui.Text
-            if label:IsA("TextLabel") and string.find(string.upper(label.Text), "ERROR") then
-                return true
-            end
+    for _, part in pairs(atm:GetDescendants()) do
+        if part:IsA("TextLabel") and string.find(string.upper(part.Text), "ERROR") then
+            return true
         end
     end
     return false
