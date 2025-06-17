@@ -112,7 +112,7 @@ local function WalkToATM(atm)
 
             -- คำนวณระยะทางเพื่อกำหนดระยะเวลา Tween ให้ความเร็วคงที่
             local distance = (rootPart.Position - waypoint.Position).Magnitude
-            local desiredSpeed = 100 -- กำหนดความเร็ว (studs per second)
+            local desiredSpeed = 30 -- กำหนดความเร็ว (studs per second)
             local duration = distance / desiredSpeed 
             if duration < 0.1 then duration = 0.1 end -- กำหนดระยะเวลาขั้นต่ำเพื่อป้องกันการกระพริบ
 
