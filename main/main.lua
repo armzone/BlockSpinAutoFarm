@@ -5,7 +5,7 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService") -- Used for simulating key presses (may not always work)
-local TweenService = game:GetService("TweenService") -- Added TweenService
+local TweenService = game:GetService("TweenService") -- Added TweenService (still included for potential future use or if vehicle part uses it)
 
 -- Ensure LocalPlayer is loaded
 local player = Players.LocalPlayer
@@ -24,27 +24,55 @@ local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChi
 local currentATM = nil
 local moving = false
 
--- Raycast parameters for ground detection
-local raycastParams = RaycastParams.new()
--- Filter out the character's parts by getting all descendants of the character
-raycastParams.FilterDescendantsInstances = {char}
-raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+-- Table to store path visualization parts
+local pathVisualizationParts = {}
 
--- Function to get the Y-coordinate of the ground at a given X,Z position
-local function getGroundY(position)
-    -- Start ray slightly above the position to ensure it hits the ground
-    local origin = Vector3.new(position.X, position.Y + 50, position.Z)
-    local direction = Vector3.new(0, -100, 0) -- Cast downwards
-    
-    local raycastResult = workspace:Raycast(origin, direction, raycastParams)
-    
-    if raycastResult and raycastResult.Position then
-        return raycastResult.Position.Y
+-- Function to clear previous path visualization
+local function ClearPathVisualization()
+    for _, part in pairs(pathVisualizationParts) do
+        if part and part.Parent then
+            part:Destroy()
+        end
     end
-    -- Fallback: If no ground found, use the original Y.
-    -- This might happen if the waypoint is off the map or in the air.
-    warn("[AutoFarmATM] No ground found at position:", position)
-    return position.Y 
+    pathVisualizationParts = {}
+end
+
+-- Function to draw the path using parts
+local function DrawPath(waypoints)
+    ClearPathVisualization() -- Clear any existing path first
+
+    for i = 1, #waypoints - 1 do
+        local p1 = waypoints[i].Position
+        local p2 = waypoints[i+1].Position
+
+        local segment = Instance.new("Part")
+        segment.Name = "PathSegment"
+        segment.Anchored = true
+        segment.CanCollide = false
+        segment.Transparency = 0.5 -- Adjust transparency as needed
+        segment.BrickColor = BrickColor.new("Bright blue") -- Adjust color as needed
+
+        local distance = (p2 - p1).Magnitude
+        segment.Size = Vector3.new(0.5, 0.5, distance) -- Thickness and length
+        segment.CFrame = CFrame.new(p1:Lerp(p2, 0.5), p2) -- Position halfway between, facing p2
+
+        segment.Parent = Workspace -- Parent to Workspace or a specific folder for organization
+        table.insert(pathVisualizationParts, segment)
+    end
+
+    -- Also draw a marker at each waypoint for clarity
+    for _, waypoint in ipairs(waypoints) do
+        local marker = Instance.new("Part")
+        marker.Name = "WaypointMarker"
+        marker.Anchored = true
+        marker.CanCollide = false
+        marker.Transparency = 0.5
+        marker.BrickColor = BrickColor.new("Lapis") -- Slightly different color for markers
+        marker.Size = Vector3.new(1, 1, 1)
+        marker.CFrame = CFrame.new(waypoint.Position)
+        marker.Parent = Workspace
+        table.insert(pathVisualizationParts, marker)
+    end
 end
 
 
@@ -98,18 +126,27 @@ local function WalkToATM(atm)
 
     if path.Status == Enum.PathStatus.Success then
         local waypoints = path:GetWaypoints()
+        DrawPath(waypoints) -- Draw the path visualization
 
         -- Check if the player is in a vehicle (VehicleSeat)
         local vehicleSeat = nil
         if humanoid.Seat and humanoid.Seat:IsA("VehicleSeat") then
             vehicleSeat = humanoid.Seat
             print("[✅ AutoFarmATM] Moving by vehicle to ATM =>", atm:GetFullName())
-            -- Disable PlatformStand if it was active from a previous run or for some reason
+            -- Ensure PlatformStand is false if it was active from a previous run
             humanoid.PlatformStand = false
         else
-            print("[✅ AutoFarmATM] Walking (TweenService) to ATM =>", atm:GetFullName())
-            -- Set Humanoid to PlatformStand temporarily to manage physics during Tween
-            humanoid.PlatformStand = true
+            print("[✅ AutoFarmATM] Walking (humanoid:MoveTo()) to ATM =>", atm:GetFullName())
+            -- For humanoid:MoveTo(), PlatformStand should generally be false
+            humanoid.PlatformStand = false 
+        end
+
+        -- Store original WalkSpeed for humanoid if walking
+        local originalWalkSpeed = humanoid.WalkSpeed
+        if not vehicleSeat then
+            -- Set desired WalkSpeed for walking character
+            humanoid.WalkSpeed = 24 -- Default Roblox walkspeed, you can increase this up to ~32 for noticeable difference
+            print(string.format("[AutoFarmATM] ตั้งค่า WalkSpeed เป็น %.1f", humanoid.WalkSpeed))
         end
 
         for i, waypoint in ipairs(waypoints) do
@@ -117,18 +154,20 @@ local function WalkToATM(atm)
             if not IsATMReady(currentATM) or not humanoid.Parent then
                 print("[⚠️] ATM used or player died → Finding new ATM")
                 if not vehicleSeat then
-                    humanoid.PlatformStand = false -- Revert PlatformStand for walking
+                    humanoid.WalkSpeed = originalWalkSpeed -- Revert WalkSpeed for walking
                 end
+                ClearPathVisualization() -- Clear path on interruption
                 moving = false
                 return
             end
 
             if vehicleSeat then
-                -- Vehicle movement logic
+                -- Vehicle movement logic (remains unchanged)
                 local vehicleModel = vehicleSeat.Parent -- Assuming VehicleSeat is directly under the vehicle model
                 if not vehicleModel or not vehicleModel.PrimaryPart then
                     warn("[❌ AutoFarmATM] Vehicle model or PrimaryPart not found.")
                     moving = false
+                    ClearPathVisualization()
                     return
                 end
                 
@@ -145,6 +184,7 @@ local function WalkToATM(atm)
                         vehicleSeat.Throttle = 0
                         vehicleSeat.Steer = 0
                         moving = false
+                        ClearPathVisualization()
                         return
                     end
 
@@ -175,74 +215,20 @@ local function WalkToATM(atm)
                 task.wait(0.5) -- Small pause to allow vehicle to stabilize
                 
             else
-                -- Humanoid (walking) movement logic using TweenService
-                local startCFrame = rootPart.CFrame
+                -- Humanoid (walking) movement logic using humanoid:MoveTo()
+                humanoid:MoveTo(waypoint.Position)
                 
-                -- Get the ground Y at the current waypoint's X,Z position
-                local groundY = getGroundY(waypoint.Position)
-                -- Adjust the waypoint's Y position to be on the ground, considering HipHeight and a small offset
-                local groundOffset = 0.5 -- Small offset to float slightly above ground, adjust as needed
-                local adjustedWaypointPosition = Vector3.new(waypoint.Position.X, groundY + humanoid.HipHeight + groundOffset, waypoint.Position.Z)
-
-                -- Calculate target CFrame, including rotation to face the next Waypoint
-                -- The lookAtPosition should also be adjusted to ground level for natural looking
-                local lookAtPosition = adjustedWaypointPosition 
-                if i + 1 <= #waypoints then
-                    local nextWaypointGroundY = getGroundY(waypoints[i+1].Position)
-                    lookAtPosition = Vector3.new(waypoints[i+1].Position.X, nextWaypointGroundY + humanoid.HipHeight + groundOffset, waypoints[i+1].Position.Z)
-                else
-                    local finalTargetGroundY = getGroundY(targetPos)
-                    lookAtPosition = Vector3.new(targetPos.X, finalTargetGroundY + humanoid.HipHeight + groundOffset, targetPos.Z)
-                end
-
-                -- Create target CFrame for movement and rotation
-                local targetCFrame = CFrame.new(adjustedWaypointPosition, lookAtPosition)
-
-                -- Calculate distance for Tween duration to maintain consistent speed
-                local distance = (rootPart.Position - adjustedWaypointPosition).Magnitude -- Use adjusted position for distance
-                local desiredSpeed = 25 -- Adjusted speed slightly lower to reduce teleport detection, adjust as needed
-                local duration = distance / desiredSpeed 
-                if duration < 0.1 then duration = 0.1 end -- Set minimum duration to prevent flickering
-
-                local tweenInfo = TweenInfo.new(
-                    duration,                   -- Time to take for Tween
-                    Enum.EasingStyle.Linear,    -- Easing style (Linear is constant speed)
-                    Enum.EasingDirection.Out,   -- Easing direction
-                    0,                          -- Number of repeats
-                    false,                      -- Does not reverse
-                    0                           -- Delay before start
-                )
-
-                local tween = TweenService:Create(rootPart, tweenInfo, {CFrame = targetCFrame})
-                tween:Play()
-                
-                -- Wait for Tween to complete or be interrupted (e.g., player dies or ATM not ready)
-                local tweenFinished = false
-                local connection
-                connection = tween.Completed:Connect(function()
-                    tweenFinished = true
-                    connection:Disconnect()
+                -- Add timeout for MoveToFinished to prevent getting stuck
+                local success, message = pcall(function()
+                    humanoid.MoveToFinished:Wait(5) -- Wait up to 5 seconds for MoveTo to complete
                 end)
 
-                -- Loop to check conditions during Tween
-                local loopStartTime = os.clock()
-                while not tweenFinished and os.clock() - loopStartTime < duration + 0.5 do -- Add buffer time
-                    if not IsATMReady(currentATM) or not humanoid.Parent then
-                        print("[⚠️] ATM used or player died during Tween → Finding new ATM")
-                        tween:Cancel() -- Cancel current Tween
-                        humanoid.PlatformStand = false -- Revert PlatformStand
-                        moving = false
-                        if connection then connection:Disconnect() end
-                        return
-                    end
-                    task.wait(0.05) -- Check every 0.05 seconds
-                end
-                if not tweenFinished then -- If Tween does not complete within allotted time (might be stuck)
-                    warn("[❌ AutoFarmATM] Tween to Waypoint failed to complete in time")
-                    tween:Cancel()
-                    humanoid.PlatformStand = false
+                if not success or message == "timeout" then
+                    warn("[❌ AutoFarmATM] MoveToFinished timeout or error: ", message)
+                    humanoid:MoveTo(rootPart.Position) -- Stop current movement
+                    humanoid.WalkSpeed = originalWalkSpeed -- Revert WalkSpeed
+                    ClearPathVisualization() -- Clear path on timeout/error
                     moving = false
-                    if connection then connection:Disconnect() end
                     return
                 end
             end -- End of if vehicleSeat / else
@@ -250,13 +236,14 @@ local function WalkToATM(atm)
 
         print("[✅ AutoFarmATM] Arrived at ATM:", atm:GetFullName())
 
-        -- Revert Humanoid from PlatformStand if walking
+        -- Revert WalkSpeed for humanoid if walking
         if not vehicleSeat then
-            humanoid.PlatformStand = false
+            humanoid.WalkSpeed = originalWalkSpeed
         else
             vehicleSeat.Throttle = 0 -- Stop vehicle completely upon arrival
             vehicleSeat.Steer = 0
         end
+        ClearPathVisualization() -- Clear path on successful arrival
 
         local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
@@ -268,8 +255,9 @@ local function WalkToATM(atm)
     else
         warn("[❌ AutoFarmATM] Failed to compute path! Status:", path.Status.Name)
         if not vehicleSeat then
-            humanoid.PlatformStand = false -- Ensure PlatformStand is reset if Pathfinding fails
+            humanoid.WalkSpeed = originalWalkSpeed -- Ensure WalkSpeed is reset if Pathfinding fails
         end
+        ClearPathVisualization() -- Clear path on Pathfinding failure
     end
     moving = false
 end
