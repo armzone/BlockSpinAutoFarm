@@ -15,8 +15,8 @@ local PathfindingService = game:GetService("PathfindingService")
 local RunService = game:GetService("RunService")
 
 --// Configuration
-_G.WalkSpeedOverride = 24 -- กำหนดความเร็วแบบ manual ได้ที่นี่ เช่น _G.WalkSpeedOverride = 20
-local ADJUST_SPEED_BY_FPS = false -- [ใหม่] ตั้งค่านี้เป็น false หากคุณต้องการปรับ WalkSpeed เอง
+_G.WalkSpeedOverride = nil -- กำหนดความเร็วแบบ manual ได้ที่นี่ เช่น _G.WalkSpeedOverride = 20
+local ADJUST_SPEED_BY_FPS = true -- [ใหม่] ตั้งค่านี้เป็น false หากคุณต้องการปรับ WalkSpeed เอง
 
 --// Variables
 local player = Players.LocalPlayer
@@ -103,7 +103,8 @@ local function WalkToATM(atm)
     moving = true
     currentATM = atm
     
-    local targetPos = (atm:IsA("Model") and atm:GetPivot().Position or atm.Position) + Vector3.new(0, 3, 0)
+    local basePart = atm:FindFirstChild("Area") or atm:FindFirstChildWhichIsA("BasePart", true)
+    local targetPos = basePart and basePart.Position or ((atm:IsA("Model") and atm:GetPivot().Position or atm.Position) + Vector3.new(0, 1.5, 0))
 
     local path = PathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true, AgentCanClimb = true, WaypointSpacing = 4 })
     path:ComputeAsync(rootPart.Position, targetPos)
