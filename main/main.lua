@@ -49,15 +49,6 @@ local function WalkToATM(atm)
     currentATM = atm
     local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
 
-    -- ปรับให้ PathfindingService มองข้ามสิ่งที่ทะลุได้
-    local originalCanQuery = {}
-    for _, part in pairs(Workspace:GetDescendants()) do
-        if part:IsA("BasePart") and not part.CanCollide then
-            originalCanQuery[part] = part.CanQuery
-            part.CanQuery = false
-        end
-    end
-
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
         AgentHeight = 5,
@@ -66,30 +57,22 @@ local function WalkToATM(atm)
         WaypointSpacing = 4
     })
 
+    -- เคลียร์ obstacles ที่ทะลุได้
+    for _, part in pairs(Workspace:GetDescendants()) do
+        if part:IsA("BasePart") and not part.CanCollide then
+            part.LocalTransparencyModifier = 0.9 -- debug
+            part.CanQuery = false
+        end
+    end
+
     path:ComputeAsync(rootPart.Position, targetPos)
     if path.Status == Enum.PathStatus.Success then
         print("[✅ AutoFarmATM] เดินไปยัง ATM =>", atm:GetFullName())
         for _, waypoint in ipairs(path:GetWaypoints()) do
+            -- ระหว่างเดิน เช็คว่า ATM ยังพร้อมอยู่หรือไม่
             if not IsATMReady(currentATM) then
                 print("[⚠️] ATM ถูกใช้ไปแล้ว → หาตู้ใหม่")
                 moving = false
-                return
-            end
-            humanoid:MoveTo(waypoint.Position)
-            humanoid.MoveToFinished:Wait()
-        end
-    else
-        warn("[❌ AutoFarmATM] ไม่สามารถคำนวณ path ได้! สถานะ:", path.Status.Name)
-    end
-
-    -- คืนค่า CanQuery เดิมให้วัตถุที่ทะลุได้
-    for part, canQuery in pairs(originalCanQuery) do
-        if part and part:IsDescendantOf(workspace) then
-            part.CanQuery = canQuery
-        end
-    end
-
-    moving = false
                 return
             end
             humanoid:MoveTo(waypoint.Position)
