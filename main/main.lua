@@ -1,19 +1,13 @@
--- LocalScript: AutoFarmATM (StarterPlayerScripts)
--- ใช้ TweenService กับ Position (ไม่ใช้ CFrame) และยกตัวละครขึ้นจากพื้นเล็กน้อยเพื่อหลีกเลี่ยงการจมและโดนตรวจจับ
+-- Tween Walk Hybrid (Reliable)
+-- ใช้ Pathfinding + TweenService (Position) พร้อมระบบปรับตำแหน่งพื้นและ fallback
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
-local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local CollectionService = game:GetService("CollectionService")
 
 local player = Players.LocalPlayer
-if not player then
-    warn("[AutoFarmATM] LocalPlayer ไม่พร้อมใช้งาน!")
-    return
-end
-
 local char = player.Character or player.CharacterAdded:Wait()
 local humanoid = char:WaitForChild("Humanoid")
 local rootPart = char:WaitForChild("HumanoidRootPart")
@@ -23,25 +17,16 @@ local moving = false
 
 local function IsATMReady(atm)
     local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt then
-        return prompt.Enabled
-    end
-    return false
+    return prompt and prompt.Enabled
 end
 
 local function FindNearestReadyATM()
     local nearestATM = nil
     local shortestDist = math.huge
-    local taggedATMs = CollectionService:GetTagged("ATM")
-
-    for _, atm in pairs(taggedATMs) do
-        if not (atm:IsA("Model") or atm:IsA("BasePart")) then
-            continue
-        end
-
+    for _, atm in pairs(CollectionService:GetTagged("ATM")) do
+        if not (atm:IsA("Model") or atm:IsA("BasePart")) then continue end
         local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
         local dist = (pos - rootPart.Position).Magnitude
-
         if IsATMReady(atm) and dist < shortestDist then
             shortestDist = dist
             nearestATM = atm
@@ -50,12 +35,24 @@ local function FindNearestReadyATM()
     return nearestATM
 end
 
+local function SafeTweenTo(position, speed)
+    local adjustedY = math.max(position.Y, Workspace.FallenPartsDestroyHeight + 5) + 3
+    local goal = Vector3.new(position.X, adjustedY, position.Z)
+    local distance = (rootPart.Position - goal).Magnitude
+    local duration = distance / speed
+    if duration < 0.1 then duration = 0.1 end
+
+    local tween = TweenService:Create(rootPart, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Position = goal})
+    tween:Play()
+    tween.Completed:Wait()
+end
+
 local function WalkToATM(atm)
     if not atm then return end
     moving = true
     currentATM = atm
-    local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
 
+    local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
         AgentHeight = 5,
@@ -67,65 +64,21 @@ local function WalkToATM(atm)
     path:ComputeAsync(rootPart.Position, targetPos)
 
     if path.Status == Enum.PathStatus.Success then
-        print("[✅ AutoFarmATM] เดินไปยัง ATM โดยใช้ TweenService =>", atm:GetFullName())
-
-        local waypoints = path:GetWaypoints()
-
-        for i, waypoint in ipairs(waypoints) do
+        print("[TweenWalk] กำลังเดินไป ATM →", atm:GetFullName())
+        for _, wp in ipairs(path:GetWaypoints()) do
             if not IsATMReady(currentATM) or not humanoid.Parent then
-                print("[⚠️] ATM ถูกใช้ไปแล้วหรือผู้เล่นตาย → หาตู้ใหม่")
                 moving = false
                 return
             end
-
-            local adjustedTargetPos = waypoint.Position + Vector3.new(0, 5, 0)
-
-            local distance = (rootPart.Position - adjustedTargetPos).Magnitude
-            local desiredSpeed = 50
-            local duration = distance / desiredSpeed
-            if duration < 0.1 then duration = 0.1 end
-
-            local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out, 0, false, 0)
-            local tween = TweenService:Create(rootPart, tweenInfo, {Position = adjustedTargetPos})
-            tween:Play()
-
-            local tweenFinished = false
-            local connection
-            connection = tween.Completed:Connect(function()
-                tweenFinished = true
-                connection:Disconnect()
-            end)
-
-            local loopStartTime = os.clock()
-            while not tweenFinished and os.clock() - loopStartTime < duration + 0.5 do
-                if not IsATMReady(currentATM) or not humanoid.Parent then
-                    print("[⚠️] ATM ถูกใช้ไปแล้วหรือผู้เล่นตายระหว่าง Tween → หาตู้ใหม่")
-                    tween:Cancel()
-                    moving = false
-                    if connection then connection:Disconnect() end
-                    return
-                end
-                task.wait(0.05)
-            end
-
-            if not tweenFinished then
-                warn("[❌ AutoFarmATM] Tween ถึง Waypoint ไม่สำเร็จภายในเวลาที่กำหนด")
-                tween:Cancel()
-                moving = false
-                if connection then connection:Disconnect() end
-                return
-            end
+            SafeTweenTo(wp.Position, 100)
         end
-
-        print("[✅ AutoFarmATM] ถึง ATM แล้ว:", atm:GetFullName())
-
+        print("[TweenWalk] ถึง ATM แล้ว")
         local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
-            print("[AutoFarmATM] พบ ProximityPrompt บน ATM แต่ต้องมีการกดปุ่มหรือ RemoteEvent เพื่อกระตุ้น")
+            print("[Prompt] พร้อมสำหรับใช้งาน")
         end
-
     else
-        warn("[❌ AutoFarmATM] ไม่สามารถคำนวณ path ได้! สถานะ:", path.Status.Name)
+        warn("[TweenWalk] Path ล้มเหลว:", path.Status.Name)
     end
     moving = false
 end
@@ -133,14 +86,11 @@ end
 while true do
     if not moving and humanoid.Parent then
         local atm = FindNearestReadyATM()
-        if atm then
-            WalkToATM(atm)
-        else
-            warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่พร้อมใช้งาน")
-        end
+        if atm then WalkToATM(atm)
+        else warn("[ATM] ไม่มีตู้ที่พร้อมใช้งาน") end
     elseif not humanoid.Parent then
-        warn("[AutoFarmATM] ผู้เล่นเสียชีวิต หรือ Humanoid/Character หายไป หยุดการทำงาน")
+        warn("[ATM] ตัวละครตาย หยุดสคริปต์")
         break
     end
-    task.wait(3)
+    task.wait(2.5)
 end
