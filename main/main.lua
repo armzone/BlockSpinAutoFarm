@@ -1,5 +1,5 @@
 -- LocalScript: AutoFarmATM (StarterPlayerScripts)
--- เวอร์ชันรวม (ยังไม่แยกโมดูล) เพื่อทดสอบการทำงานเบื้องต้น
+-- เวอร์ชันรวม พร้อมตรวจสอบว่า ATM มีข้อความ ERROR หรือไม่ ก่อนเดินไป
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -12,18 +12,36 @@ local rootPart = char:WaitForChild("HumanoidRootPart")
 
 local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
 
--- 🔍 ค้นหา ATM ที่ใกล้ที่สุด
+-- 🔎 ตรวจสอบว่า ATM มีข้อความ ERROR หรือไม่
+local function IsATMError(atm)
+    local screenText = atm:FindFirstChild("Part", true)
+    if screenText then
+        local screenGui = screenText:FindFirstChild("Screen")
+        if screenGui and screenGui:FindFirstChild("Text") then
+            local label = screenGui.Text
+            if label:IsA("TextLabel") and string.find(string.upper(label.Text), "ERROR") then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- 🔍 ค้นหา ATM ที่ใกล้ที่สุด (ที่ไม่ Error)
 local function FindNearestATM()
     local nearestATM = nil
     local shortestDist = math.huge
     for _, atm in pairs(ATMFolder:GetChildren()) do
-        if atm:IsA("Model") or atm:IsA("Part") then
-            local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
-            local dist = (pos - rootPart.Position).Magnitude
-            if dist < shortestDist then
-                shortestDist = dist
-                nearestATM = atm
-            end
+        if IsATMError(atm) then
+            print("[⛔] ข้าม ATM ที่ Error:", atm:GetFullName())
+            continue
+        end
+
+        local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
+        local dist = (pos - rootPart.Position).Magnitude
+        if dist < shortestDist then
+            shortestDist = dist
+            nearestATM = atm
         end
     end
     return nearestATM
