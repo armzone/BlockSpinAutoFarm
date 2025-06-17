@@ -80,7 +80,6 @@ local function WalkToATM(atm)
             local conn
             conn = humanoid.MoveToFinished:Connect(function()
                 finished = true
-                if conn then conn:Disconnect() end
             end)
             local startTime = os.clock()
             while not finished and os.clock() - startTime < 5 do
@@ -92,6 +91,7 @@ local function WalkToATM(atm)
                 end
                 task.wait(0.1)
             end
+            if conn then conn:Disconnect() end
         end
         local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then pcall(function() fireproximityprompt(prompt) end) end
