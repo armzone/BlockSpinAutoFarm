@@ -69,13 +69,11 @@ local function WalkToATM(atm)
     if path.Status == Enum.PathStatus.Success then
         print("[✅ AutoFarmATM] เดินไปยัง ATM โดยใช้ TweenService =>", atm:GetFullName())
 
-        humanoid.PlatformStand = true
         local waypoints = path:GetWaypoints()
 
         for i, waypoint in ipairs(waypoints) do
             if not IsATMReady(currentATM) or not humanoid.Parent then
                 print("[⚠️] ATM ถูกใช้ไปแล้วหรือผู้เล่นตาย → หาตู้ใหม่")
-                humanoid.PlatformStand = false
                 moving = false
                 return
             end
@@ -104,7 +102,6 @@ local function WalkToATM(atm)
                 if not IsATMReady(currentATM) or not humanoid.Parent then
                     print("[⚠️] ATM ถูกใช้ไปแล้วหรือผู้เล่นตายระหว่าง Tween → หาตู้ใหม่")
                     tween:Cancel()
-                    humanoid.PlatformStand = false
                     moving = false
                     if connection then connection:Disconnect() end
                     return
@@ -115,7 +112,6 @@ local function WalkToATM(atm)
             if not tweenFinished then
                 warn("[❌ AutoFarmATM] Tween ถึง Waypoint ไม่สำเร็จภายในเวลาที่กำหนด")
                 tween:Cancel()
-                humanoid.PlatformStand = false
                 moving = false
                 if connection then connection:Disconnect() end
                 return
@@ -123,7 +119,6 @@ local function WalkToATM(atm)
         end
 
         print("[✅ AutoFarmATM] ถึง ATM แล้ว:", atm:GetFullName())
-        humanoid.PlatformStand = false
 
         local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
@@ -132,7 +127,6 @@ local function WalkToATM(atm)
 
     else
         warn("[❌ AutoFarmATM] ไม่สามารถคำนวณ path ได้! สถานะ:", path.Status.Name)
-        humanoid.PlatformStand = false
     end
     moving = false
 end
