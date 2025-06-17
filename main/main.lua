@@ -1,5 +1,5 @@
--- Tween Walk Hybrid (ล้มก่อน Tween เพื่อหลบระบบตรวจจับ)
--- ใช้ Humanoid:ChangeState(Enum.HumanoidStateType.Physics) ให้ตัวละครล้มก่อน แล้ว Tween RootPart
+-- Tween Walk Hybrid (ล้มก่อน Tween โดยไม่ใช้ Anchored)
+-- ใช้ Humanoid:ChangeState(Enum.HumanoidStateType.Physics) ให้ล้ม แล้ว Tween RootPart โดยไม่ Anchored
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -36,7 +36,7 @@ local function FindNearestReadyATM()
 end
 
 local function FallAndTween(position, speed)
-    humanoid:ChangeState(Enum.HumanoidStateType.Physics) -- 🧍‍♂️ ทำให้ล้มก่อน
+    humanoid:ChangeState(Enum.HumanoidStateType.Physics) -- ล้มก่อน
 
     local adjustedY = math.max(position.Y, Workspace.FallenPartsDestroyHeight + 5) + 3
     local goal = Vector3.new(position.X, adjustedY, position.Z)
@@ -44,13 +44,12 @@ local function FallAndTween(position, speed)
     local duration = distance / speed
     if duration < 0.2 then duration = 0.2 end
 
-    rootPart.Anchored = true
+    -- ไม่ Anchored rootPart
     local tween = TweenService:Create(rootPart, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Position = goal})
     tween:Play()
     tween.Completed:Wait()
-    rootPart.Anchored = false
 
-    humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) -- 🔄 กลับมาลุก
+    humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) -- ลุกกลับ
 end
 
 local function WalkToATM(atm)
