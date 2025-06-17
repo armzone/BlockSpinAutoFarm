@@ -17,14 +17,17 @@ local moving = false
 
 -- 🔎 ตรวจสอบว่า ATM มีข้อความ ERROR หรือไม่
 local function IsATMError(atm)
-    for _, gui in pairs(atm:GetDescendants()) do
-        if gui:IsA("TextLabel") then
-            local raw = string.upper(gui.Text or "")
-            print("[ตรวจ ATM] =>", gui:GetFullName(), "Text =", raw)
-            if string.find(raw, "ERROR") then
-                return true
-            end
+    local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        if not prompt.Enabled then
+            print("[⚠️ ATM] ปิดการใช้งาน ProximityPrompt => ถือว่า Error:", atm:GetFullName())
+            return true
+        else
+            print("[✅ ATM] ProximityPrompt เปิดใช้งาน:", atm:GetFullName())
         end
+    else
+        print("[⚠️ ATM] ไม่พบ ProximityPrompt ใน:", atm:GetFullName())
+        return true
     end
     return false
 end
@@ -96,5 +99,5 @@ while true do
             warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่ใกล้ที่สุด")
         end
     end
-    task.wait(3)
+    task.wait(5)
 end
