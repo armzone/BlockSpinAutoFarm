@@ -1,7 +1,3 @@
--- LocalScript: AutoFarmATM (StarterPlayerScripts)
--- ✅ ปรับปรุงใหม่: รองรับการตาย/รีเซ็ตตัวละคร
--- กลับไปใช้แบบเดินไปยังตู้แรกที่พร้อม และเปลี่ยนเป้าหมายหากตู้ถูกใช้ไปก่อนถึง
-
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
