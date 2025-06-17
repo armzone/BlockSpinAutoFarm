@@ -78,5 +78,5 @@ while true do
     else
         warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่ใกล้ที่สุด")
     end
-    task.wait(10)
+    task.wait(5)
 end
