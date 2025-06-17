@@ -6,8 +6,14 @@ local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService") -- ใช้สำหรับจำลองการกดปุ่ม (อาจไม่ทำงานเสมอไป)
 
--- แก้ไขจาก Players:GetLocalPlayer() เป็น Players.LocalPlayer
-local player = Players.LocalPlayer 
+-- ตรวจสอบให้แน่ใจว่า LocalPlayer โหลดแล้ว
+local player = Players.LocalPlayer
+if not player then
+    warn("[AutoFarmATM] LocalPlayer ไม่พร้อมใช้งาน!")
+    return -- หยุดสคริปต์หาก LocalPlayer ไม่พร้อม
+end
+
+-- รอให้ Character และ Humanoid โหลดสมบูรณ์
 local char = player.Character or player.CharacterAdded:Wait()
 local humanoid = char:WaitForChild("Humanoid")
 local rootPart = char:WaitForChild("HumanoidRootPart")
