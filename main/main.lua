@@ -1,15 +1,44 @@
--- ใน main.lua
-print("AutoFarm Loaded ✅")
--- โค้ด autofarm ทั้งหมดตรงนี้
+-- LocalScript: AutoFarmATM (StarterPlayerScripts)
+-- ✅ ปรับปรุงใหม่: รองรับการตาย/รีเซ็ตตัวละคร
+-- กลับไปใช้แบบเดินไปยังตู้แรกที่พร้อม และเปลี่ยนเป้าหมายหากตู้ถูกใช้ไปก่อนถึง
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
 
 local player = Players.LocalPlayer
-local char = player.Character or player.CharacterAdded:Wait()
-local humanoid = char:WaitForChild("Humanoid")
-local rootPart = char:WaitForChild("HumanoidRootPart")
+local char, humanoid, rootPart
+
+local function BindCharacter()
+    char = player.Character or player.CharacterAdded:Wait()
+    humanoid = char:WaitForChild("Humanoid")
+    rootPart = char:WaitForChild("HumanoidRootPart")
+
+    -- ⚙️ ปรับ WalkSpeed ตาม FPS เพื่อให้ลื่นไหล
+    local heartbeat = game:GetService("RunService").Heartbeat
+    local lastFrame = tick()
+
+    heartbeat:Connect(function()
+        local now = tick()
+        local delta = now - lastFrame
+        lastFrame = now
+
+        -- ประมาณค่า FPS = 1 / delta
+        local estimatedFPS = math.clamp(1 / delta, 30, 144)
+        local speed = math.clamp(16 * (estimatedFPS / 60), 16, 26) -- คูณเพิ่มตาม FPS ปกติ
+        humanoid.WalkSpeed = speed
+    end)
+end
+end
+
+BindCharacter()
+
+-- ฟังชันเมื่อรีเซ็ต/ตาย
+player.CharacterAdded:Connect(function()
+    print("[⚠️] ตัวละครถูกรีเซ็ต → กำลังโหลดใหม่...")
+    moving = false
+    BindCharacter()
+end)
 
 local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
 
