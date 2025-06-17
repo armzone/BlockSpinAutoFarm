@@ -1,5 +1,5 @@
--- Tween Walk Hybrid (Reliable)
--- ใช้ Pathfinding + TweenService (Position) พร้อมระบบปรับตำแหน่งพื้นและ fallback
+-- Tween Walk Hybrid (Safe Slow)
+-- ปรับให้ความเร็วต่ำลง และเคลื่อนที่ช้าเพื่อลดโอกาสถูกตรวจจับ Teleport
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -40,7 +40,7 @@ local function SafeTweenTo(position, speed)
     local goal = Vector3.new(position.X, adjustedY, position.Z)
     local distance = (rootPart.Position - goal).Magnitude
     local duration = distance / speed
-    if duration < 0.1 then duration = 0.1 end
+    if duration < 0.2 then duration = 0.2 end -- เพิ่มเวลาให้พอดีสำหรับ tween
 
     local tween = TweenService:Create(rootPart, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Position = goal})
     tween:Play()
@@ -64,18 +64,18 @@ local function WalkToATM(atm)
     path:ComputeAsync(rootPart.Position, targetPos)
 
     if path.Status == Enum.PathStatus.Success then
-        print("[TweenWalk] กำลังเดินไป ATM →", atm:GetFullName())
+        print("[TweenWalk] เดินไป ATM →", atm:GetFullName())
         for _, wp in ipairs(path:GetWaypoints()) do
             if not IsATMReady(currentATM) or not humanoid.Parent then
                 moving = false
                 return
             end
-            SafeTweenTo(wp.Position, 100)
+            SafeTweenTo(wp.Position, 40) -- ลดความเร็ว tween ลงเพื่อไม่ให้โดนตรวจจับ
         end
         print("[TweenWalk] ถึง ATM แล้ว")
         local prompt = currentATM:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt then
-            print("[Prompt] พร้อมสำหรับใช้งาน")
+            print("[Prompt] พร้อมใช้งาน")
         end
     else
         warn("[TweenWalk] Path ล้มเหลว:", path.Status.Name)
