@@ -3,7 +3,7 @@
     - แก้ไข Syntax Error ในฟังก์ชัน BindCharacter
     - ลูปที่ไม่จำเป็นในฟังก์ชัน WalkToATM ซึ่งส่งผลต่อประสิทธิภาพอย่างรุนแรงออกไป (อันนี้ไม่พบแต่ได้เพิ่มประสิทธิภาพแล้ว)
     - ปรับปรุงการทำงานให้เสถียรขึ้น
-    - แก้ไขปัญหา NoPath
+    - แก้ไขปัญหา NoPath โดยจะพยายาม MoveTo โดยตรงเสมอไม่ว่าระยะห่างเท่าไหร่
     - เพิ่มระบบ Manual Override
     - [ใหม่] เพิ่มตัวเลือกให้สามารถปรับ WalkSpeed เองได้
     - [สำคัญ] เพิ่มการโต้ตอบกับ ProximityPrompt
@@ -201,19 +201,21 @@ local function WalkToATM(atm)
         InteractWithATM(atm)
     else
         warn("[AutoFarmATM] ❌ ไม่สามารถคำนวณเส้นทางได้! สถานะ:", path.Status.Name)
-        -- การจัดการเมื่อ Pathfinding ล้มเหลว
-        -- ลองคำนวณใหม่ หรือลอง MoveTo โดยตรงหากใกล้พอ
-        if (rootPart.Position - targetPosition).Magnitude < INTERACT_DISTANCE * 2 then -- ถ้าใกล้พอที่จะเดินไปตรงๆ
-            log("ลอง MoveTo โดยตรงเนื่องจาก Pathfinding ล้มเหลว.")
-            humanoid:MoveTo(targetPosition)
-            humanoid.MoveToFinished:Wait(5) -- รอสักครู่
-            if (rootPart.Position - targetPosition).Magnitude < INTERACT_DISTANCE then
+        log("⚠️ Pathfinding ล้มเหลว, จะพยายาม MoveTo โดยตรงไปยัง ATM ไม่ว่าระยะทางเท่าไหร่.")
+        moving = true -- ยังคงถือว่ากำลังเคลื่อนที่
+        humanoid:MoveTo(targetPosition)
+        local success = humanoid.MoveToFinished:Wait(15) -- เพิ่มเวลา Wait เนื่องจากระยะทางอาจไกล
+        if success then
+            log("✨ MoveTo โดยตรงสำเร็จ!")
+            -- ตรวจสอบระยะห่างอีกครั้งเมื่อถึงที่หมาย เพื่อให้แน่ใจว่าพร้อมโต้ตอบ
+            if (rootPart.Position - targetPosition).Magnitude < INTERACT_DISTANCE * 1.5 then 
                 InteractWithATM(atm)
             else
-                log("❌ MoveTo โดยตรงก็ล้มเหลว, ต้องหา ATM ใหม่.")
+                log("⚠️ ถึงเป้าหมายโดยประมาณ แต่ยังไม่ใกล้พอที่จะโต้ตอบ. กำลังหา ATM ใหม่.")
+                -- หากไม่ใกล้พอ คุณอาจต้องการให้สคริปต์พยายามหา ATM ใหม่ทันที
             end
         else
-            log("❌ ระยะห่างมากเกินไปที่จะ MoveTo โดยตรง, ต้องหา ATM ใหม่.")
+            log("❌ MoveTo โดยตรงล้มเหลวหรือไม่ถึงเป้าหมายภายในเวลาที่กำหนด. กำลังหา ATM ใหม่.")
         end
     end
     
