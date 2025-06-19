@@ -1,109 +1,29 @@
--- เพิ่มความเร็ว BMX โดยใช้ BodyVelocity คงอยู่ตลอดเวลา (loop) + รองรับ AutoFarmATM + เพิ่มระบบนำทาง ATM
+-- LocalScript: AutoFarmATM_CFrame (StarterPlayerScripts)
+-- ใช้ Pathfinding + เคลื่อนที่ด้วย CFrame และ Delta Time เพื่อให้ความเร็วคงที่ทุก FPS
 
-local Workspace = game:GetService("Workspace")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local humanoid = character:FindFirstChildOfClass("Humanoid")
-local rootPart = character:WaitForChild("HumanoidRootPart")
-if not humanoid then
-    warn("❌ ไม่พบ Humanoid ของผู้เล่น")
-    return
-end
+local char = player.Character or player.CharacterAdded:Wait()
+local humanoid = char:WaitForChild("Humanoid")
+local rootPart = char:WaitForChild("HumanoidRootPart")
 
 local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
+
 local currentATM = nil
 local moving = false
+local speed = 80 -- studs per second
 
--- ฟังก์ชันให้ออกจากรถก่อนนำทาง ATM
-local function DismountIfSeated()
-    if humanoid.SeatPart then
-        print("[🚲] ผู้เล่นอยู่บนพาหนะ → ลงก่อนเดินหา ATM")
-        humanoid.Sit = false
-        task.wait(0.3)
-    end
-end
-
--- ฟังก์ชันให้นั่งกลับขึ้น BMX หลังจากคำนวณเส้นทางแล้ว
-local function TryMountBackToBMX()
-    for _, seat in ipairs(Workspace:GetDescendants()) do
-        if seat:IsA("VehicleSeat") and seat:IsDescendantOf(Workspace:FindFirstChild("Vehicles")) and not seat.Occupant then
-            if (seat.Position - rootPart.Position).Magnitude <= 15 then
-                print("[🚲] กำลังนั่งกลับขึ้น BMX...")
-                rootPart.CFrame = seat.CFrame + Vector3.new(0, 5, 0)
-                task.wait(0.2)
-                humanoid.Sit = true
-                return
-            end
-        end
-    end
-end
-
--- เรียกใช้ตอนเริ่มเพื่อเตรียมความเร็วหากอยู่บนรถ
-local function TryBoostBMX()
-    local seat = nil
-    for _, s in ipairs(Workspace:GetDescendants()) do
-        if s:IsA("VehicleSeat") and s.Occupant == humanoid then
-            seat = s
-            break
-        end
-    end
-
-    if not seat then
-        warn("❌ ไม่พบ VehicleSeat ที่ผู้เล่นกำลังนั่งอยู่ (Occupant)")
-        return
-    end
-
-    local bmx = seat:FindFirstAncestorWhichIsA("Model")
-    while bmx and bmx.Parent ~= Workspace:FindFirstChild("Vehicles") do
-        bmx = bmx.Parent
-    end
-
-    if not bmx or not bmx:IsA("Model") then
-        warn("❌ ไม่พบโมเดล BMX ของผู้เล่นภายใต้ Vehicles")
-        return
-    end
-
-    print("✅ พบ BMX ของผู้เล่น: " .. bmx.Name)
-
-    for _, part in ipairs(bmx:GetDescendants()) do
-        if part:IsA("BasePart") then
-            part.Anchored = false
-        end
-    end
-
-    local mainPart = bmx:FindFirstChild("DriverSeat") or bmx.PrimaryPart or bmx:FindFirstChildWhichIsA("BasePart")
-    if not mainPart then
-        warn("❌ ไม่พบชิ้นส่วนหลักเพื่อใช้เพิ่มความเร็ว")
-        return
-    end
-
-    local bv = mainPart:FindFirstChild("BMXForce") or Instance.new("BodyVelocity")
-    bv.Name = "BMXForce"
-    bv.MaxForce = Vector3.new(1e5, 0, 1e5)
-    bv.Parent = mainPart
-
-    RunService.Heartbeat:Connect(function()
-        if not mainPart or not mainPart:IsDescendantOf(Workspace) then return end
-        if humanoid.SeatPart == seat then
-            bv.Velocity = mainPart.CFrame.LookVector * 120
-        else
-            bv.Velocity = Vector3.zero
-        end
-    end)
-
-    print("🚀 เพิ่มความเร็ว BMX ด้วย BodyVelocity (ต่อเนื่อง) สำเร็จ")
-end
-
--- 🔍 ค้นหา ATM ตัวแรกที่พร้อมใช้งาน
+-- ตรวจสอบว่า ATM พร้อมใช้งาน
 local function IsATMReady(atm)
     local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
     return prompt and prompt.Enabled or false
 end
 
+-- ค้นหา ATM ที่ใกล้และพร้อมใช้งานที่สุด
 local function FindNearestReadyATM()
     local nearestATM = nil
     local shortestDist = math.huge
@@ -119,50 +39,73 @@ local function FindNearestReadyATM()
     return nearestATM
 end
 
--- 🧭 นำทางตัวละครไปยัง ATM ด้วย Pathfinding
-local function NavigateToATM(atm)
+-- เคลื่อนที่ด้วย CFrame ตามความเร็วที่คงที่ (ไม่สน FPS)
+local function MoveToPositionViaCFrame(targetPosition)
+    return task.spawn(function()
+        local connection
+        connection = RunService.Heartbeat:Connect(function(dt)
+            local direction = (targetPosition - rootPart.Position)
+            local distance = direction.Magnitude
+            if distance < 1 then
+                connection:Disconnect()
+                return
+            end
+            local moveDelta = math.min(speed * dt, distance)
+            local moveVector = direction.Unit * moveDelta
+            rootPart.CFrame = CFrame.new(rootPart.Position + moveVector, targetPosition)
+        end)
+    end)
+end
+
+-- นำทางไปยัง ATM โดยใช้ Pathfinding + CFrame
+local function WalkToATM(atm)
     if not atm then return end
-    currentATM = atm
-    DismountIfSeated()
     moving = true
+    currentATM = atm
 
     local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
-    local path = PathfindingService:CreatePath()
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        AgentCanClimb = true,
+        WaypointSpacing = 4
+    })
+
     path:ComputeAsync(rootPart.Position, targetPos)
 
     if path.Status ~= Enum.PathStatus.Success then
-        warn("[❌] ล้มเหลวในการนำทาง ATM")
+        warn("[❌ AutoFarmATM] Pathfinding ล้มเหลว")
         moving = false
         return
     end
 
     for _, waypoint in ipairs(path:GetWaypoints()) do
-        humanoid:MoveTo(waypoint.Position)
-        local success = humanoid.MoveToFinished:Wait()
-        if not success or not IsATMReady(atm) then
-            print("[⚠️] เป้าหมายไม่พร้อมหรือยกเลิกระหว่างทาง")
+        if not IsATMReady(currentATM) or not humanoid.Parent then
+            print("[⚠️] ATM ใช้ไปแล้ว หรือผู้เล่นตาย")
             moving = false
             return
         end
+        MoveToPositionViaCFrame(waypoint.Position)
+        repeat task.wait() until (rootPart.Position - waypoint.Position).Magnitude < 1
     end
 
-    print("[✅] ถึงตำแหน่ง ATM แล้ว")
-    TryMountBackToBMX()
+    print("[✅ AutoFarmATM] ถึง ATM แล้ว")
     moving = false
 end
 
--- 🔁 ลูปหลักตรวจสอบและเคลื่อนที่
-TryBoostBMX()
-_G.DismountIfSeated = DismountIfSeated
-
+-- ลูปหลัก
 while true do
     if not moving and humanoid.Parent then
         local atm = FindNearestReadyATM()
         if atm then
-            NavigateToATM(atm)
+            WalkToATM(atm)
         else
             warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่พร้อมใช้งาน")
         end
+    elseif not humanoid.Parent then
+        warn("[AutoFarmATM] ผู้เล่นตายหรือ Humanoid หายไป")
+        break
     end
-    task.wait(3)
+    task.wait(2.5)
 end
