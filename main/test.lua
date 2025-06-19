@@ -11,28 +11,37 @@ local humanoid = char:WaitForChild("Humanoid")
 local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
 
 local moving = false
-local speed = 60 -- studs per second
+local speed = 60 -- studs/second
 
--- 🔎 ตรวจสอบ ATM ว่าพร้อมใช้งาน
+-- 🔎 ตรวจสอบว่า ATM พร้อมใช้งาน
 local function IsATMReady(atm)
 	local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
-	return prompt and prompt.Enabled
+	local result = prompt and prompt.Enabled
+	print(string.format("[DEBUG] ตรวจสอบ ATM %s → %s", atm.Name, result and "✅ พร้อม" or "❌ ไม่พร้อม"))
+	return result
 end
 
 -- 🔍 ค้นหา ATM ที่ใกล้ที่สุด
 local function FindNearestReadyATM()
-	local closest, dist = nil, math.huge
+	local nearestATM = nil
+	local shortestDist = math.huge
 	for _, atm in pairs(ATMFolder:GetChildren()) do
 		local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
-		local d = (rootPart.Position - pos).Magnitude
-		if IsATMReady(atm) and d < dist then
-			closest, dist = atm, d
+		local dist = (rootPart.Position - pos).Magnitude
+		if IsATMReady(atm) and dist < shortestDist then
+			shortestDist = dist
+			nearestATM = atm
 		end
 	end
-	return closest
+	if nearestATM then
+		print(string.format("[DEBUG] พบ ATM ที่ใกล้สุด: %s (ระยะ %.1f)", nearestATM.Name, shortestDist))
+	else
+		print("[DEBUG] ❌ ไม่พบ ATM ที่พร้อมใช้งาน")
+	end
+	return nearestATM
 end
 
--- 🖌️ สร้างเส้นนำทาง (Neon)
+-- 🖌️ วาดจุดนำทาง
 local function DrawPath(waypoints)
 	for _, wp in ipairs(waypoints) do
 		local part = Instance.new("Part")
@@ -47,23 +56,25 @@ local function DrawPath(waypoints)
 	end
 end
 
--- 🧭 เดินด้วย CFrame ไปยัง ATM
+-- 🧭 เคลื่อนที่ไปยัง ATM ทีละ Waypoint
 local function WalkToATM(atm)
 	if not atm then return end
 	moving = true
-
 	local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
+
 	local path = PathfindingService:CreatePath()
 	path:ComputeAsync(rootPart.Position, targetPos)
 
 	if path.Status == Enum.PathStatus.Success then
 		local waypoints = path:GetWaypoints()
 		DrawPath(waypoints)
+		print(string.format("[DEBUG] เริ่มเคลื่อนที่ไปยัง ATM: %s (Waypoints = %d)", atm.Name, #waypoints))
 
-		for _, wp in ipairs(waypoints) do
+		for i, wp in ipairs(waypoints) do
+			print(string.format("[DEBUG] → Waypoint %d | ตำแหน่ง: (%.1f, %.1f, %.1f)", i, wp.Position.X, wp.Position.Y, wp.Position.Z))
+
 			local reached = false
 			RunService:BindToRenderStep("MoveToATM", Enum.RenderPriority.Character.Value, function(dt)
-				if not moving then return end
 				local dir = (wp.Position - rootPart.Position)
 				local dist = dir.Magnitude
 				if dist < 1 then
@@ -76,29 +87,31 @@ local function WalkToATM(atm)
 			end)
 
 			while not reached and moving do
+				if not IsATMReady(atm) or humanoid.Health <= 0 then
+					print("[DEBUG] ❌ หยุดเดิน เพราะ ATM ไม่พร้อม หรือผู้เล่นตาย")
+					RunService:UnbindFromRenderStep("MoveToATM")
+					moving = false
+					return
+				end
 				task.wait()
 			end
-
 			RunService:UnbindFromRenderStep("MoveToATM")
-
-			if not IsATMReady(atm) then
-				print("⚠️ ATM ถูกใช้ไปแล้ว → ยกเลิก")
-				break
-			end
 		end
+
+		print(string.format("[DEBUG] ✅ ถึงจุดหมาย ATM: %s", atm.Name))
+	else
+		print("[DEBUG] ❌ Pathfinding ล้มเหลว:", path.Status.Name)
 	end
 
 	moving = false
 end
 
--- 🔁 ลูปฟาร์ม
+-- 🔁 ลูปหลัก
 while true do
 	if not moving and humanoid.Health > 0 then
 		local atm = FindNearestReadyATM()
 		if atm then
 			WalkToATM(atm)
-		else
-			warn("❌ ไม่มี ATM ที่พร้อมใช้งาน")
 		end
 	end
 	task.wait(2)
