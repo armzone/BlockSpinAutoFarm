@@ -11,7 +11,7 @@ local humanoid = char:WaitForChild("Humanoid")
 
 local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
 local moving = false
-local speed = 60
+local speed = 20
 
 -- ตรวจสอบว่า ATM พร้อมใช้งาน
 local function IsATMReady(atm)
