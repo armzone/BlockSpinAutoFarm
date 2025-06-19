@@ -1,6 +1,3 @@
--- LocalScript: AutoFarmATM_CFrame (StarterPlayerScripts)
--- ใช้ Pathfinding + เคลื่อนที่ด้วย CFrame และ Delta Time เพื่อให้ความเร็วคงที่ทุก FPS
-
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
@@ -8,104 +5,101 @@ local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
-local humanoid = char:WaitForChild("Humanoid")
 local rootPart = char:WaitForChild("HumanoidRootPart")
+local humanoid = char:WaitForChild("Humanoid")
 
 local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
 
-local currentATM = nil
 local moving = false
-local speed = 80 -- studs per second
+local speed = 60 -- studs per second
 
--- ตรวจสอบว่า ATM พร้อมใช้งาน
+-- 🔎 ตรวจสอบ ATM ว่าพร้อมใช้งาน
 local function IsATMReady(atm)
-    local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
-    return prompt and prompt.Enabled or false
+	local prompt = atm:FindFirstChildWhichIsA("ProximityPrompt", true)
+	return prompt and prompt.Enabled
 end
 
--- ค้นหา ATM ที่ใกล้และพร้อมใช้งานที่สุด
+-- 🔍 ค้นหา ATM ที่ใกล้ที่สุด
 local function FindNearestReadyATM()
-    local nearestATM = nil
-    local shortestDist = math.huge
-    for _, atm in pairs(ATMFolder:GetChildren()) do
-        if not (atm:IsA("Model") or atm:IsA("BasePart")) then continue end
-        local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
-        local dist = (pos - rootPart.Position).Magnitude
-        if IsATMReady(atm) and dist < shortestDist then
-            shortestDist = dist
-            nearestATM = atm
-        end
-    end
-    return nearestATM
+	local closest, dist = nil, math.huge
+	for _, atm in pairs(ATMFolder:GetChildren()) do
+		local pos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
+		local d = (rootPart.Position - pos).Magnitude
+		if IsATMReady(atm) and d < dist then
+			closest, dist = atm, d
+		end
+	end
+	return closest
 end
 
--- เคลื่อนที่ด้วย CFrame ตามความเร็วที่คงที่ (ไม่สน FPS)
-local function MoveToPositionViaCFrame(targetPosition)
-    return task.spawn(function()
-        local connection
-        connection = RunService.Heartbeat:Connect(function(dt)
-            local direction = (targetPosition - rootPart.Position)
-            local distance = direction.Magnitude
-            if distance < 1 then
-                connection:Disconnect()
-                return
-            end
-            local moveDelta = math.min(speed * dt, distance)
-            local moveVector = direction.Unit * moveDelta
-            rootPart.CFrame = CFrame.new(rootPart.Position + moveVector, targetPosition)
-        end)
-    end)
+-- 🖌️ สร้างเส้นนำทาง (Neon)
+local function DrawPath(waypoints)
+	for _, wp in ipairs(waypoints) do
+		local part = Instance.new("Part")
+		part.Anchored = true
+		part.CanCollide = false
+		part.Material = Enum.Material.Neon
+		part.Color = Color3.fromRGB(0, 255, 0)
+		part.Size = Vector3.new(0.3, 0.3, 0.3)
+		part.CFrame = CFrame.new(Vector3.new(wp.Position.X, rootPart.Position.Y, wp.Position.Z))
+		part.Parent = Workspace
+		game.Debris:AddItem(part, 3)
+	end
 end
 
--- นำทางไปยัง ATM โดยใช้ Pathfinding + CFrame
+-- 🧭 เดินด้วย CFrame ไปยัง ATM
 local function WalkToATM(atm)
-    if not atm then return end
-    moving = true
-    currentATM = atm
+	if not atm then return end
+	moving = true
 
-    local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
-    local path = PathfindingService:CreatePath({
-        AgentRadius = 2,
-        AgentHeight = 5,
-        AgentCanJump = true,
-        AgentCanClimb = true,
-        WaypointSpacing = 4
-    })
+	local targetPos = atm:IsA("Model") and atm:GetModelCFrame().Position or atm.Position
+	local path = PathfindingService:CreatePath()
+	path:ComputeAsync(rootPart.Position, targetPos)
 
-    path:ComputeAsync(rootPart.Position, targetPos)
+	if path.Status == Enum.PathStatus.Success then
+		local waypoints = path:GetWaypoints()
+		DrawPath(waypoints)
 
-    if path.Status ~= Enum.PathStatus.Success then
-        warn("[❌ AutoFarmATM] Pathfinding ล้มเหลว")
-        moving = false
-        return
-    end
+		for _, wp in ipairs(waypoints) do
+			local reached = false
+			RunService:BindToRenderStep("MoveToATM", Enum.RenderPriority.Character.Value, function(dt)
+				if not moving then return end
+				local dir = (wp.Position - rootPart.Position)
+				local dist = dir.Magnitude
+				if dist < 1 then
+					reached = true
+					return
+				end
+				local move = dir.Unit * speed * dt
+				if move.Magnitude > dist then move = dir end
+				rootPart.CFrame = rootPart.CFrame + Vector3.new(move.X, 0, move.Z)
+			end)
 
-    for _, waypoint in ipairs(path:GetWaypoints()) do
-        if not IsATMReady(currentATM) or not humanoid.Parent then
-            print("[⚠️] ATM ใช้ไปแล้ว หรือผู้เล่นตาย")
-            moving = false
-            return
-        end
-        MoveToPositionViaCFrame(waypoint.Position)
-        repeat task.wait() until (rootPart.Position - waypoint.Position).Magnitude < 1
-    end
+			while not reached and moving do
+				task.wait()
+			end
 
-    print("[✅ AutoFarmATM] ถึง ATM แล้ว")
-    moving = false
+			RunService:UnbindFromRenderStep("MoveToATM")
+
+			if not IsATMReady(atm) then
+				print("⚠️ ATM ถูกใช้ไปแล้ว → ยกเลิก")
+				break
+			end
+		end
+	end
+
+	moving = false
 end
 
--- ลูปหลัก
+-- 🔁 ลูปฟาร์ม
 while true do
-    if not moving and humanoid.Parent then
-        local atm = FindNearestReadyATM()
-        if atm then
-            WalkToATM(atm)
-        else
-            warn("[AutoFarmATM] ❌ ไม่พบ ATM ที่พร้อมใช้งาน")
-        end
-    elseif not humanoid.Parent then
-        warn("[AutoFarmATM] ผู้เล่นตายหรือ Humanoid หายไป")
-        break
-    end
-    task.wait(2.5)
+	if not moving and humanoid.Health > 0 then
+		local atm = FindNearestReadyATM()
+		if atm then
+			WalkToATM(atm)
+		else
+			warn("❌ ไม่มี ATM ที่พร้อมใช้งาน")
+		end
+	end
+	task.wait(2)
 end
