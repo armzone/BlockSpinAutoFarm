@@ -1,8 +1,9 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local PathfindingService = game:GetService("PathfindingService")
-local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 local Debris = game:GetService("Debris")
+local RunService = game:GetService("RunService")
 
 local player = Players.LocalPlayer
 local char = player.Character or player.CharacterAdded:Wait()
@@ -11,7 +12,7 @@ local humanoid = char:WaitForChild("Humanoid")
 
 local ATMFolder = Workspace:WaitForChild("Map"):WaitForChild("Props"):WaitForChild("ATMs")
 local moving = false
-local speed = 5
+local speed = 25 -- studs per second (ปลอดภัยสำหรับ anticheat)
 
 -- ตรวจสอบว่า ATM พร้อมใช้งาน
 local function IsATMReady(atm)
@@ -38,43 +39,37 @@ local function FindNearestReadyATM()
 	return nearestATM
 end
 
--- สร้างเส้นนำทาง
+-- วาดจุด Waypoint
 local function DrawWaypoint(pos)
-	local p = Instance.new("Part")
-	p.Anchored = true
-	p.CanCollide = false
-	p.Material = Enum.Material.Neon
-	p.Color = Color3.fromRGB(0, 255, 0)
-	p.Size = Vector3.new(0.3, 0.3, 0.3)
-	p.Position = Vector3.new(pos.X, rootPart.Position.Y + 0.5, pos.Z)
-	p.Parent = Workspace
-	Debris:AddItem(p, 5)
+	local part = Instance.new("Part")
+	part.Anchored = true
+	part.CanCollide = false
+	part.Material = Enum.Material.Neon
+	part.Color = Color3.fromRGB(0, 255, 0)
+	part.Size = Vector3.new(0.3, 0.3, 0.3)
+	part.Position = Vector3.new(pos.X, rootPart.Position.Y + 0.5, pos.Z)
+	part.Parent = Workspace
+	Debris:AddItem(part, 4)
 end
 
--- เดินไปยัง Waypoint ทีละจุด (ด้วย Heartbeat)
-local function MoveToPosition(targetPos)
-	local done = false
-	local connection
+-- เดินด้วย TweenService ทีละ Waypoint
+local function TweenTo(pos)
+	local currentPos = rootPart.Position
+	local flatTarget = Vector3.new(pos.X, currentPos.Y, pos.Z)
+	local distance = (flatTarget - currentPos).Magnitude
+	local duration = distance / speed
 
-	connection = RunService.Heartbeat:Connect(function(dt)
-		local currentPos = rootPart.Position
-		local fixedTarget = Vector3.new(targetPos.X, currentPos.Y, targetPos.Z)
-		local direction = fixedTarget - currentPos
-		local distance = direction.Magnitude
-		if distance < 1 then
-			done = true
-			connection:Disconnect()
-			return
-		end
-		local step = math.min(speed * dt, distance)
-		local moveVector = direction.Unit * step
-		rootPart.CFrame = rootPart.CFrame + Vector3.new(moveVector.X, 0, moveVector.Z)
-	end)
+	if duration < 0.1 then duration = 0.1 end
 
-	repeat task.wait() until done
+	local targetCFrame = CFrame.new(currentPos, flatTarget)
+	local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear)
+	local tween = TweenService:Create(rootPart, tweenInfo, {CFrame = CFrame.new(flatTarget, flatTarget + targetCFrame.LookVector)})
+
+	tween:Play()
+	tween.Completed:Wait()
 end
 
--- ไปยัง ATM
+-- เดินไปยัง ATM
 local function WalkToATM(atm)
 	if not atm then return end
 	moving = true
@@ -85,29 +80,29 @@ local function WalkToATM(atm)
 
 	if path.Status == Enum.PathStatus.Success then
 		local waypoints = path:GetWaypoints()
-		print(string.format("[DEBUG] เริ่มเคลื่อนที่ไปยัง ATM: %s (Waypoints = %d)", atm.Name, #waypoints))
+		print(string.format("[DEBUG] เริ่มเดินไป ATM: %s (Waypoints: %d)", atm.Name, #waypoints))
 
 		for i, wp in ipairs(waypoints) do
-			print(string.format("[DEBUG] → Waypoint %d | ตำแหน่ง: (%.1f, %.1f, %.1f)", i, wp.Position.X, wp.Position.Y, wp.Position.Z))
-			DrawWaypoint(wp.Position)
 			if not IsATMReady(atm) then
 				print("[DEBUG] ❌ ATM ถูกใช้ไประหว่างทาง → ยกเลิก")
 				moving = false
 				return
 			end
-			MoveToPosition(wp.Position)
+			print(string.format("[DEBUG] → Waypoint %d (%.1f, %.1f, %.1f)", i, wp.Position.X, wp.Position.Y, wp.Position.Z))
+			DrawWaypoint(wp.Position)
+			TweenTo(wp.Position)
 		end
 
-		print("[DEBUG] ✅ ถึงเป้าหมาย ATM:", atm.Name)
+		print("[✅ DEBUG] ถึง ATM แล้ว:", atm.Name)
 	else
-		warn("[❌ AutoFarmATM] Pathfinding ล้มเหลว:", path.Status.Name)
+		warn("[❌ AutoFarmATM] ไม่สามารถคำนวณ Path ได้:", path.Status.Name)
 	end
 
 	moving = false
 end
 
 -- 🔁 ลูปหลัก
-print("🔁 เริ่ม AutoFarmATM (CFrame + Heartbeat)")
+print("🔁 เริ่ม AutoFarmATM (TweenService แบบปลอดภัย)")
 while true do
 	if not moving and humanoid.Health > 0 then
 		local atm = FindNearestReadyATM()
