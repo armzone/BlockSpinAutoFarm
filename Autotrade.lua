@@ -41,6 +41,16 @@ end
 player.CharacterAdded:Connect(OnCharacterAdded)
 
 -- วาดเส้นด้วย Beam เพื่อแสดง Path (ปรับปรุงแล้ว)
+local activeBeams = {}
+local function ClearAllBeams()
+    for _, beam in pairs(activeBeams) do
+        if beam and beam.Parent then
+            beam:Destroy()
+        end
+    end
+    activeBeams = {}
+end
+
 local function DrawPathLine(fromPos, toPos, color)
     if not Workspace.Terrain then return end
     
@@ -55,16 +65,21 @@ local function DrawPathLine(fromPos, toPos, color)
     local beam = Instance.new("Beam")
     beam.Attachment0 = att0
     beam.Attachment1 = att1
-    beam.Width0 = 0.3
-    beam.Width1 = 0.3
+    beam.Width0 = 0.5
+    beam.Width1 = 0.5
     beam.Color = ColorSequence.new(color or Color3.new(0, 1, 0))
     beam.FaceCamera = true
-    beam.Transparency = NumberSequence.new(0.3)
+    beam.Transparency = NumberSequence.new(0.2)
+    beam.LightEmission = 0.5
     beam.Parent = att0
     
-    -- ทำลายหลัง 20 วินาที
-    Debris:AddItem(att0, 20)
-    Debris:AddItem(att1, 20)
+    -- เก็บไว้ใน array เพื่อจัดการ
+    table.insert(activeBeams, att0)
+    table.insert(activeBeams, att1)
+    
+    -- ทำลายหลัง 60 วินาที (เพิ่มเวลา)
+    Debris:AddItem(att0, 60)
+    Debris:AddItem(att1, 60)
 end
 
 -- เคลื่อนที่ไปยังตำแหน่งด้วย CFrame (ปรับปรุงแล้ว)
@@ -75,6 +90,8 @@ local function MoveToPosition(targetPos, useFullY)
     local connection
     local timeout = 30 -- หมดเวลา 30 วินาที
     local startTime = tick()
+    
+    print(string.format("[DEBUG] 🎯 เดินไป: %s", tostring(targetPos)))
     
     connection = RunService.Heartbeat:Connect(function(dt)
         -- ตรวจสอบ timeout
@@ -105,7 +122,9 @@ local function MoveToPosition(targetPos, useFullY)
         local direction = fixedTarget - currentPos
         local distance = direction.Magnitude
         
-        if distance < 1.5 then
+        -- ลดระยะทางที่ต้องการให้ใกล้ขึ้น
+        if distance < 3 then
+            print(string.format("[DEBUG] ✅ ถึงแล้ว! ระยะ: %.2f", distance))
             done = true
             connection:Disconnect()
             return
@@ -113,6 +132,11 @@ local function MoveToPosition(targetPos, useFullY)
         
         local step = math.min(speed * dt, distance)
         local moveVector = direction.Unit * step
+        
+        -- Debug ข้อมูล
+        if math.floor(tick()) % 2 == 0 and (tick() - math.floor(tick())) < 0.1 then
+            print(string.format("[DEBUG] 📍 ระยะ: %.2f | ความเร็ว: %.2f", distance, step/dt))
+        end
         
         -- ใช้ CFrame แบบปลอดภัย
         local success, err = pcall(function()
@@ -143,6 +167,9 @@ local function WalkToPosition(targetPos, retryCount)
     
     print(string.format("[DEBUG] 🚶 เริ่มเดินไป: %s (ครั้งที่ %d)", tostring(targetPos), retryCount + 1))
     
+    -- ลบเส้นเก่าก่อน
+    ClearAllBeams()
+    
     local success, path = pcall(function()
         return PathfindingService:CreatePath({
             AgentRadius = 2,
@@ -150,7 +177,7 @@ local function WalkToPosition(targetPos, retryCount)
             AgentCanJump = true,
             AgentJumpHeight = 15,
             AgentCanClimb = true,
-            WaypointSpacing = 4,
+            WaypointSpacing = 8, -- เพิ่มระยะห่าง waypoint
             Costs = {
                 Water = 20,
                 DangerousArea = math.huge
@@ -178,7 +205,7 @@ local function WalkToPosition(targetPos, retryCount)
         local waypoints = path:GetWaypoints()
         print(string.format("[DEBUG] 🟢 พบเส้นทาง: %d waypoints", #waypoints))
         
-        -- วาดเส้นทาง
+        -- วาดเส้นทางทั้งหมด
         for i = 1, #waypoints - 1 do
             local color = waypoints[i].Action == Enum.PathWaypointAction.Jump and Color3.new(1, 1, 0) or Color3.new(0, 1, 0)
             DrawPathLine(waypoints[i].Position, waypoints[i + 1].Position, color)
@@ -191,17 +218,55 @@ local function WalkToPosition(targetPos, retryCount)
                 return false
             end
             
+            print(string.format("[DEBUG] 📍 Waypoint %d/%d: %s", i, #waypoints, tostring(wp.Position)))
+            
             -- กระโดดถ้าจำเป็น
             if wp.Action == Enum.PathWaypointAction.Jump then
                 print("🦘 กระโดด!")
                 humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                task.wait(0.3)
+                task.wait(0.5) -- รอกระโดดให้เสร็จ
             end
             
-            local moveSuccess = MoveToPosition(wp.Position, true)
+            -- ใช้ Humanoid.MoveTo แทน CFrame สำหรับการเดินที่เป็นธรรมชาติ
+            local moveSuccess = false
+            local attempts = 0
+            
+            while not moveSuccess and attempts < 3 do
+                attempts = attempts + 1
+                
+                -- ลองใช้ Humanoid.MoveTo ก่อน
+                humanoid:MoveTo(wp.Position)
+                local moveStart = tick()
+                
+                -- รอจนกว่าจะถึง waypoint ห또ือหมดเวลา
+                while IsCharacterValid() and isEnabled do
+                    local currentPos = rootPart.Position
+                    local distance = (wp.Position - currentPos).Magnitude
+                    
+                    if distance < 4 then
+                        moveSuccess = true
+                        break
+                    end
+                    
+                    if tick() - moveStart > 10 then -- หมดเวลา 10 วินาที
+                        print("⏰ หมดเวลา MoveTo - ลองใช้ CFrame")
+                        moveSuccess = MoveToPosition(wp.Position, true)
+                        break
+                    end
+                    
+                    task.wait(0.1)
+                end
+                
+                if not moveSuccess then
+                    print(string.format("🔄 ลองใหม่ waypoint %d (ครั้งที่ %d)", i, attempts))
+                    task.wait(1)
+                end
+            end
+            
             if not moveSuccess then
-                warn("❌ ไม่สามารถเดินไป waypoint ที่", i)
-                break
+                warn(string.format("❌ ไม่สามารถไปถึง waypoint %d", i))
+                -- ลองต่อ waypoint ถัดไป
+                continue
             end
         end
         
@@ -280,35 +345,173 @@ local function ToggleAutoFarm()
     end
 end
 
--- Commands สำหรับควบคุม
-game.Players.LocalPlayer.Chatted:Connect(function(message)
-    local cmd = message:lower()
-    if cmd == "/start" or cmd == "/เริ่ม" then
-        if not isEnabled then ToggleAutoFarm() end
-    elseif cmd == "/stop" or cmd == "/หยุด" then
-        if isEnabled then ToggleAutoFarm() end
-    elseif cmd == "/status" or cmd == "/สถานะ" then
-        print(string.format("📊 สถานะ: %s | กำลังเคลื่อนที่: %s | ตำแหน่งปัจจุบัน: %d/%d", 
-            isEnabled and "เปิด" or "ปิด", 
-            moving and "ใช่" or "ไม่", 
-            currentTargetIndex, 
-            #targetPositions))
-    elseif cmd == "/help" or cmd == "/ช่วยเหลือ" then
-        print([[
-🤖 คำสั่ง AutoFarm:
-/start หรือ /เริ่ม - เริ่มระบบ
-/stop หรือ /หยุด - หยุดระบบ  
-/status หรือ /สถานะ - ดูสถานะ
-/help หรือ /ช่วยเหลือ - ดูคำสั่ง
-        ]])
+-- สร้าง UI สำหรับควบคุม
+local function CreateAutoFarmGUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AutoFarmGUI"
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+    screenGui.ResetOnSpawn = false
+    
+    -- Main Frame
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "MainFrame"
+    mainFrame.Size = UDim2.new(0, 250, 0, 200)
+    mainFrame.Position = UDim2.new(0, 20, 0, 20)
+    mainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
+    mainFrame.BackgroundTransparency = 0.3
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Parent = screenGui
+    
+    -- Corner Radius
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = mainFrame
+    
+    -- Title
+    local title = Instance.new("TextLabel")
+    title.Name = "Title"
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.Position = UDim2.new(0, 0, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "🤖 AutoFarm Control"
+    title.TextColor3 = Color3.new(1, 1, 1)
+    title.TextScaled = true
+    title.Font = Enum.Font.GothamBold
+    title.Parent = mainFrame
+    
+    -- Status Label
+    local statusLabel = Instance.new("TextLabel")
+    statusLabel.Name = "StatusLabel"
+    statusLabel.Size = UDim2.new(1, -20, 0, 25)
+    statusLabel.Position = UDim2.new(0, 10, 0, 35)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Text = "📊 สถานะ: ปิด"
+    statusLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+    statusLabel.TextScaled = true
+    statusLabel.Font = Enum.Font.Gotham
+    statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+    statusLabel.Parent = mainFrame
+    
+    -- Target Label
+    local targetLabel = Instance.new("TextLabel")
+    targetLabel.Name = "TargetLabel"
+    targetLabel.Size = UDim2.new(1, -20, 0, 25)
+    targetLabel.Position = UDim2.new(0, 10, 0, 65)
+    targetLabel.BackgroundTransparency = 1
+    targetLabel.Text = "🎯 ตำแหน่ง: 1/1"
+    targetLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+    targetLabel.TextScaled = true
+    targetLabel.Font = Enum.Font.Gotham
+    targetLabel.TextXAlignment = Enum.TextXAlignment.Left
+    targetLabel.Parent = mainFrame
+    
+    -- Start/Stop Button
+    local toggleButton = Instance.new("TextButton")
+    toggleButton.Name = "ToggleButton"
+    toggleButton.Size = UDim2.new(1, -20, 0, 35)
+    toggleButton.Position = UDim2.new(0, 10, 0, 100)
+    toggleButton.BackgroundColor3 = Color3.new(0, 0.6, 0)
+    toggleButton.Text = "▶️ เริ่มระบบ"
+    toggleButton.TextColor3 = Color3.new(1, 1, 1)
+    toggleButton.TextScaled = true
+    toggleButton.Font = Enum.Font.GothamBold
+    toggleButton.BorderSizePixel = 0
+    toggleButton.Parent = mainFrame
+    
+    local toggleCorner = Instance.new("UICorner")
+    toggleCorner.CornerRadius = UDim.new(0, 6)
+    toggleCorner.Parent = toggleButton
+    
+    -- Status Button
+    local statusButton = Instance.new("TextButton")
+    statusButton.Name = "StatusButton"
+    statusButton.Size = UDim2.new(1, -20, 0, 25)
+    statusButton.Position = UDim2.new(0, 10, 0, 145)
+    statusButton.BackgroundColor3 = Color3.new(0, 0.4, 0.8)
+    statusButton.Text = "📊 อัพเดทสถานะ"
+    statusButton.TextColor3 = Color3.new(1, 1, 1)
+    statusButton.TextScaled = true
+    statusButton.Font = Enum.Font.Gotham
+    statusButton.BorderSizePixel = 0
+    statusButton.Parent = mainFrame
+    
+    local statusCorner = Instance.new("UICorner")
+    statusCorner.CornerRadius = UDim.new(0, 4)
+    statusCorner.Parent = statusButton
+    
+    -- Toggle minimized state
+    local isMinimized = false
+    local originalSize = mainFrame.Size
+    
+    -- Double click to minimize
+    title.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            local currentTime = tick()
+            if title:GetAttribute("LastClick") and (currentTime - title:GetAttribute("LastClick")) < 0.5 then
+                -- Double click detected
+                isMinimized = not isMinimized
+                if isMinimized then
+                    mainFrame:TweenSize(UDim2.new(0, 250, 0, 35), "Out", "Quad", 0.3, true)
+                    title.Text = "🤖 AutoFarm (คลิกเพื่อขยาย)"
+                else
+                    mainFrame:TweenSize(originalSize, "Out", "Quad", 0.3, true)
+                    title.Text = "🤖 AutoFarm Control"
+                end
+            end
+            title:SetAttribute("LastClick", currentTime)
+        end
+    end)
+    
+    -- Update UI function
+    local function UpdateUI()
+        if isMinimized then return end
+        
+        statusLabel.Text = string.format("📊 สถานะ: %s %s", 
+            isEnabled and "🟢 เปิด" or "🔴 ปิด",
+            moving and "(กำลังเดิน)" or ""
+        )
+        targetLabel.Text = string.format("🎯 ตำแหน่ง: %d/%d", currentTargetIndex, #targetPositions)
+        
+        if isEnabled then
+            toggleButton.BackgroundColor3 = Color3.new(0.8, 0, 0)
+            toggleButton.Text = "⏹️ หยุดระบบ"
+        else
+            toggleButton.BackgroundColor3 = Color3.new(0, 0.6, 0)
+            toggleButton.Text = "▶️ เริ่มระบบ"
+        end
     end
-end)
+    
+    -- Button Events
+    toggleButton.MouseButton1Click:Connect(function()
+        ToggleAutoFarm()
+        UpdateUI()
+    end)
+    
+    statusButton.MouseButton1Click:Connect(function()
+        UpdateUI()
+        -- Visual feedback
+        statusButton.BackgroundColor3 = Color3.new(0, 0.6, 1)
+        task.wait(0.1)
+        statusButton.BackgroundColor3 = Color3.new(0, 0.4, 0.8)
+    end)
+    
+    -- Auto update every 2 seconds
+    task.spawn(function()
+        while screenGui.Parent do
+            UpdateUI()
+            task.wait(2)
+        end
+    end)
+    
+    -- Initial UI update
+    UpdateUI()
+    print("🎮 สร้าง AutoFarm GUI เรียบร้อย! (ดับเบิลคลิกชื่อเพื่อย่อ/ขยาย)")
+end
 
 -- เริ่มต้นระบบ
 task.wait(2) -- รอโหลดฉากให้เสร็จ
 print("🎮 ระบบ AutoWalk พร้อมใช้งาน!")
-print("💬 พิมพ์ /help หรือ /ช่วยเหลือ เพื่อดูคำสั่ง")
-print("🚀 พิมพ์ /start หรือ /เริ่ม เพื่อเริ่มต้น")
+CreateAutoFarmGUI()
 
 -- เริ่มอัตโนมัติ (ถ้าต้องการ)
 -- ToggleAutoFarm()
