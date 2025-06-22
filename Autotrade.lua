@@ -983,3 +983,9 @@ Initialize()Changed:Connect(function(input)
             )
         end
     end)
+-- เพิ่มปิดการ drag GUI ให้สมบูรณ์
+title.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
