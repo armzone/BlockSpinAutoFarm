@@ -13,6 +13,7 @@ local humanoid = char:WaitForChild("Humanoid")
 local moving = false
 local isEnabled = true
 local speed = 15
+local walkSpeed = 16 -- ความเร็วเดิน Humanoid
 local maxRetries = 3
 local retryDelay = 2
 
@@ -333,6 +334,17 @@ local function StartAutoFarm()
     end
 end
 
+-- ฟังก์ชันตั้งค่าความเร็ว
+local function SetWalkSpeed(newSpeed)
+    walkSpeed = math.clamp(newSpeed, 1, 50)
+    speed = walkSpeed -- อัพเดท speed สำหรับ CFrame movement
+    
+    if IsCharacterValid() then
+        humanoid.WalkSpeed = walkSpeed
+        print(string.format("⚡ ตั้งความเร็วเป็น: %.1f", walkSpeed))
+    end
+end
+
 -- ฟังก์ชันควบคุม
 local function ToggleAutoFarm()
     isEnabled = not isEnabled
@@ -355,7 +367,7 @@ local function CreateAutoFarmGUI()
     -- Main Frame
     local mainFrame = Instance.new("Frame")
     mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 250, 0, 200)
+    mainFrame.Size = UDim2.new(0, 280, 0, 280)
     mainFrame.Position = UDim2.new(0, 20, 0, 20)
     mainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
     mainFrame.BackgroundTransparency = 0.3
@@ -405,11 +417,101 @@ local function CreateAutoFarmGUI()
     targetLabel.TextXAlignment = Enum.TextXAlignment.Left
     targetLabel.Parent = mainFrame
     
+    -- Speed Settings Label
+    local speedLabel = Instance.new("TextLabel")
+    speedLabel.Name = "SpeedLabel"
+    speedLabel.Size = UDim2.new(1, -20, 0, 20)
+    speedLabel.Position = UDim2.new(0, 10, 0, 95)
+    speedLabel.BackgroundTransparency = 1
+    speedLabel.Text = string.format("⚡ ความเร็ว: %.1f", walkSpeed)
+    speedLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+    speedLabel.TextScaled = true
+    speedLabel.Font = Enum.Font.Gotham
+    speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    speedLabel.Parent = mainFrame
+    
+    -- Speed Slider Background
+    local sliderBg = Instance.new("Frame")
+    sliderBg.Name = "SliderBackground"
+    sliderBg.Size = UDim2.new(1, -40, 0, 8)
+    sliderBg.Position = UDim2.new(0, 20, 0, 120)
+    sliderBg.BackgroundColor3 = Color3.new(0.3, 0.3, 0.3)
+    sliderBg.BorderSizePixel = 0
+    sliderBg.Parent = mainFrame
+    
+    local sliderCorner = Instance.new("UICorner")
+    sliderCorner.CornerRadius = UDim.new(0, 4)
+    sliderCorner.Parent = sliderBg
+    
+    -- Speed Slider Fill
+    local sliderFill = Instance.new("Frame")
+    sliderFill.Name = "SliderFill"
+    sliderFill.Size = UDim2.new(walkSpeed / 50, 0, 1, 0) -- Max speed 50
+    sliderFill.Position = UDim2.new(0, 0, 0, 0)
+    sliderFill.BackgroundColor3 = Color3.new(0, 0.8, 1)
+    sliderFill.BorderSizePixel = 0
+    sliderFill.Parent = sliderBg
+    
+    local fillCorner = Instance.new("UICorner")
+    fillCorner.CornerRadius = UDim.new(0, 4)
+    fillCorner.Parent = sliderFill
+    
+    -- Speed Slider Knob
+    local sliderKnob = Instance.new("Frame")
+    sliderKnob.Name = "SliderKnob"
+    sliderKnob.Size = UDim2.new(0, 16, 0, 16)
+    sliderKnob.Position = UDim2.new(walkSpeed / 50, -8, 0.5, -8)
+    sliderKnob.BackgroundColor3 = Color3.new(1, 1, 1)
+    sliderKnob.BorderSizePixel = 0
+    sliderKnob.Parent = sliderBg
+    
+    local knobCorner = Instance.new("UICorner")
+    knobCorner.CornerRadius = UDim.new(1, 0)
+    knobCorner.Parent = sliderKnob
+    
+    -- Speed Preset Buttons
+    local speedButtonsFrame = Instance.new("Frame")
+    speedButtonsFrame.Name = "SpeedButtons"
+    speedButtonsFrame.Size = UDim2.new(1, -20, 0, 25)
+    speedButtonsFrame.Position = UDim2.new(0, 10, 0, 140)
+    speedButtonsFrame.BackgroundTransparency = 1
+    speedButtonsFrame.Parent = mainFrame
+    
+    local function createSpeedButton(text, speedValue, position)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0, 45, 1, 0)
+        btn.Position = UDim2.new(0, position, 0, 0)
+        btn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+        btn.Text = text
+        btn.TextColor3 = Color3.new(1, 1, 1)
+        btn.TextScaled = true
+        btn.Font = Enum.Font.Gotham
+        btn.BorderSizePixel = 0
+        btn.Parent = speedButtonsFrame
+        
+        local btnCorner = Instance.new("UICorner")
+        btnCorner.CornerRadius = UDim.new(0, 4)
+        btnCorner.Parent = btn
+        
+        btn.MouseButton1Click:Connect(function()
+            SetWalkSpeed(speedValue)
+            UpdateSpeedUI()
+        end)
+        
+        return btn
+    end
+    
+    createSpeedButton("ช้า", 8, 0)
+    createSpeedButton("ปกติ", 16, 55)
+    createSpeedButton("เร็ว", 25, 110)
+    createSpeedButton("รวดเร็ว", 35, 165)
+    createSpeedButton("สุดๆ", 50, 220)
+    
     -- Start/Stop Button
     local toggleButton = Instance.new("TextButton")
     toggleButton.Name = "ToggleButton"
     toggleButton.Size = UDim2.new(1, -20, 0, 35)
-    toggleButton.Position = UDim2.new(0, 10, 0, 100)
+    toggleButton.Position = UDim2.new(0, 10, 0, 180)
     toggleButton.BackgroundColor3 = Color3.new(0, 0.6, 0)
     toggleButton.Text = "▶️ เริ่มระบบ"
     toggleButton.TextColor3 = Color3.new(1, 1, 1)
@@ -426,7 +528,7 @@ local function CreateAutoFarmGUI()
     local statusButton = Instance.new("TextButton")
     statusButton.Name = "StatusButton"
     statusButton.Size = UDim2.new(1, -20, 0, 25)
-    statusButton.Position = UDim2.new(0, 10, 0, 145)
+    statusButton.Position = UDim2.new(0, 10, 0, 225)
     statusButton.BackgroundColor3 = Color3.new(0, 0.4, 0.8)
     statusButton.Text = "📊 อัพเดทสถานะ"
     statusButton.TextColor3 = Color3.new(1, 1, 1)
@@ -451,7 +553,7 @@ local function CreateAutoFarmGUI()
                 -- Double click detected
                 isMinimized = not isMinimized
                 if isMinimized then
-                    mainFrame:TweenSize(UDim2.new(0, 250, 0, 35), "Out", "Quad", 0.3, true)
+                    mainFrame:TweenSize(UDim2.new(0, 280, 0, 35), "Out", "Quad", 0.3, true)
                     title.Text = "🤖 AutoFarm (คลิกเพื่อขยาย)"
                 else
                     mainFrame:TweenSize(originalSize, "Out", "Quad", 0.3, true)
@@ -459,6 +561,43 @@ local function CreateAutoFarmGUI()
                 end
             end
             title:SetAttribute("LastClick", currentTime)
+        end
+    end)
+    
+    -- Speed Slider Functions
+    local function UpdateSpeedUI()
+        speedLabel.Text = string.format("⚡ ความเร็ว: %.1f", walkSpeed)
+        sliderFill.Size = UDim2.new(walkSpeed / 50, 0, 1, 0)
+        sliderKnob.Position = UDim2.new(walkSpeed / 50, -8, 0.5, -8)
+    end
+    
+    -- Speed Slider Interaction
+    local dragging = false
+    local function updateSlider(input)
+        local relativeX = (input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X
+        relativeX = math.clamp(relativeX, 0, 1)
+        local newSpeed = math.floor(relativeX * 50 * 10) / 10 -- Round to 1 decimal
+        newSpeed = math.max(1, newSpeed) -- Minimum speed 1
+        SetWalkSpeed(newSpeed)
+        UpdateSpeedUI()
+    end
+    
+    sliderBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            updateSlider(input)
+        end
+    end)
+    
+    sliderBg.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            updateSlider(input)
+        end
+    end)
+    
+    sliderBg.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
         end
     end)
     
@@ -471,6 +610,7 @@ local function CreateAutoFarmGUI()
             moving and "(กำลังเดิน)" or ""
         )
         targetLabel.Text = string.format("🎯 ตำแหน่ง: %d/%d", currentTargetIndex, #targetPositions)
+        UpdateSpeedUI()
         
         if isEnabled then
             toggleButton.BackgroundColor3 = Color3.new(0.8, 0, 0)
@@ -511,6 +651,10 @@ end
 -- เริ่มต้นระบบ
 task.wait(2) -- รอโหลดฉากให้เสร็จ
 print("🎮 ระบบ AutoWalk พร้อมใช้งาน!")
+
+-- ตั้งค่าความเร็วเริ่มต้น
+SetWalkSpeed(walkSpeed)
+
 CreateAutoFarmGUI()
 
 -- เริ่มอัตโนมัติ (ถ้าต้องการ)
