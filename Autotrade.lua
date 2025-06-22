@@ -1,48 +1,123 @@
-local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
-local PathfindingService = game:GetService("PathfindingService")
-local RunService = game:GetService("RunService")
-local Debris = game:GetService("Debris")
+-- ========================================
+-- Perfect AutoFarm Navigation System v2.0
+-- ใช้ CFrame Movement + Advanced Pathfinding
+-- ========================================
 
+-- ตรวจสอบและรอ Services
+local function waitForService(serviceName)
+    local service = nil
+    local attempts = 0
+    repeat
+        local success, result = pcall(function()
+            return game:GetService(serviceName)
+        end)
+        if success then
+            service = result
+        else
+            attempts = attempts + 1
+            if attempts > 10 then
+                error("ไม่สามารถโหลด " .. serviceName .. " ได้")
+            end
+            wait(0.1)
+        end
+    until service
+    return service
+end
+
+-- Services
+local Players = waitForService("Players")
+local Workspace = waitForService("Workspace")
+local PathfindingService = waitForService("PathfindingService")
+local RunService = waitForService("RunService")
+local Debris = waitForService("Debris")
+local TweenService = waitForService("TweenService")
+local UserInputService = waitForService("UserInputService")
+
+-- Player และ Character
 local player = Players.LocalPlayer
+if not player then
+    error("ไม่พบ LocalPlayer")
+end
+
+-- รอ Character
 local char = player.Character or player.CharacterAdded:Wait()
-local rootPart = char:WaitForChild("HumanoidRootPart")
-local humanoid = char:WaitForChild("Humanoid")
+local rootPart = char:WaitForChild("HumanoidRootPart", 10)
+local humanoid = char:WaitForChild("Humanoid", 10)
 
--- ตัวแปรสถานะ
+if not rootPart or not humanoid then
+    error("ไม่พบ Character Parts")
+end
+
+-- ========================================
+-- การตั้งค่าระบบ
+-- ========================================
+
+-- ตัวแปรหลัก
 local moving = false
-local isEnabled = true
-local speed = 15
-local walkSpeed = 16 -- ความเร็วเดิน Humanoid
-local maxRetries = 3
-local retryDelay = 2
+local isEnabled = false
+local navigationMode = "Hybrid" -- CFrame, PathOnly, Hybrid
+local movementSpeed = 8 -- ความเร็วเริ่มต้นที่ปลอดภัย
 
--- ตำแหน่งเป้าหมายหลายจุด (สามารถเพิ่มได้)
+-- การตั้งค่าขั้นสูง
+local settings = {
+    -- การเคลื่อนไหว
+    smoothMovement = true,
+    useHumanoidMovement = true,
+    adaptiveSpeed = true,
+    obstacleDetection = true,
+    safeMovement = true,
+    collisionCheck = true,
+    
+    -- Pathfinding
+    useSmartPathing = true,
+    pathOptimization = true,
+    dynamicRecalculation = true,
+    
+    -- การหลีกเลี่ยง
+    playerAvoidance = true,
+    obstacleAvoidance = true,
+    stuckDetection = true,
+    groundCheck = true,
+    
+    -- ภาพแสดงผล
+    showPath = true,
+    showDebugInfo = false,
+    beamDuration = 30
+}
+
+-- ตำแหน่งเป้าหมาย
 local targetPositions = {
     Vector3.new(1224.875, 255.1919708251953, -559.2366943359375),
-    -- เพิ่มตำแหน่งอื่นๆ ได้ที่นี่
-    -- Vector3.new(x, y, z),
+    -- เพิ่มตำแหน่งได้ที่นี่
 }
 local currentTargetIndex = 1
+local customTargets = {}
 
--- ฟังก์ชันตรวจสอบสถานะ Character
+-- ========================================
+-- ระบบจัดการ Character
+-- ========================================
+
 local function IsCharacterValid()
     return char and char.Parent and rootPart and rootPart.Parent and humanoid and humanoid.Health > 0
 end
 
--- รีเซ็ต Character เมื่อ Respawn
 local function OnCharacterAdded(newChar)
     char = newChar
-    rootPart = char:WaitForChild("HumanoidRootPart")
-    humanoid = char:WaitForChild("Humanoid")
+    rootPart = char:WaitForChild("HumanoidRootPart", 10)
+    humanoid = char:WaitForChild("Humanoid", 10)
     moving = false
-    print("🔄 Character ใหม่โหลดแล้ว - รีเซ็ตระบบ")
+    print("🔄 Character ใหม่โหลดแล้ว")
 end
 
 player.CharacterAdded:Connect(OnCharacterAdded)
 
--- วาดเส้นด้วย Beam เพื่อแสดง Path (ปรับปรุงแล้ว)
+-- ========================================
+-- ระบบ Visual
+-- ========================================
+
 local activeBeams = {}
+local debugGui = nil
+
 local function ClearAllBeams()
     for _, beam in pairs(activeBeams) do
         if beam and beam.Parent then
@@ -52,164 +127,269 @@ local function ClearAllBeams()
     activeBeams = {}
 end
 
-local function DrawPathLine(fromPos, toPos, color)
-    if not Workspace.Terrain then return end
+local function CreateBeam(fromPos, toPos, color, width, transparency)
+    if not settings.showPath then return end
     
-    local att0 = Instance.new("Attachment")
-    att0.Parent = Workspace.Terrain
-    att0.WorldPosition = fromPos
+    local success, result = pcall(function()
+        local att0 = Instance.new("Attachment")
+        att0.Parent = Workspace.Terrain
+        att0.WorldPosition = fromPos
+        
+        local att1 = Instance.new("Attachment")
+        att1.Parent = Workspace.Terrain
+        att1.WorldPosition = toPos
+        
+        local beam = Instance.new("Beam")
+        beam.Attachment0 = att0
+        beam.Attachment1 = att1
+        beam.Width0 = width or 0.5
+        beam.Width1 = width or 0.5
+        beam.Color = ColorSequence.new(color or Color3.new(0, 1, 0))
+        beam.FaceCamera = true
+        beam.Transparency = NumberSequence.new(transparency or 0.3)
+        beam.LightEmission = 0.8
+        beam.Parent = att0
+        
+        table.insert(activeBeams, att0)
+        table.insert(activeBeams, att1)
+        
+        Debris:AddItem(att0, settings.beamDuration)
+        Debris:AddItem(att1, settings.beamDuration)
+        
+        return beam
+    end)
     
-    local att1 = Instance.new("Attachment")
-    att1.Parent = Workspace.Terrain
-    att1.WorldPosition = toPos
-    
-    local beam = Instance.new("Beam")
-    beam.Attachment0 = att0
-    beam.Attachment1 = att1
-    beam.Width0 = 0.5
-    beam.Width1 = 0.5
-    beam.Color = ColorSequence.new(color or Color3.new(0, 1, 0))
-    beam.FaceCamera = true
-    beam.Transparency = NumberSequence.new(0.2)
-    beam.LightEmission = 0.5
-    beam.Parent = att0
-    
-    -- เก็บไว้ใน array เพื่อจัดการ
-    table.insert(activeBeams, att0)
-    table.insert(activeBeams, att1)
-    
-    -- ทำลายหลัง 60 วินาที (เพิ่มเวลา)
-    Debris:AddItem(att0, 60)
-    Debris:AddItem(att1, 60)
+    return success and result or nil
 end
 
--- เคลื่อนที่ไปยังตำแหน่งด้วย CFrame (ปรับปรุงแล้ว)
-local function MoveToPosition(targetPos, useFullY)
-    if not IsCharacterValid() then return false end
+-- ========================================
+-- ระบบตรวจสอบความปลอดภัย
+-- ========================================
+
+local function FindGroundPosition(position)
+    if not settings.groundCheck then return position end
     
-    local done = false
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {char}
+    
+    local startPos = position + Vector3.new(0, 50, 0)
+    local direction = Vector3.new(0, -100, 0)
+    
+    local success, raycastResult = pcall(function()
+        return Workspace:Raycast(startPos, direction, raycastParams)
+    end)
+    
+    if success and raycastResult then
+        return raycastResult.Position + Vector3.new(0, 3, 0)
+    end
+    
+    return position
+end
+
+local function CheckCollisionPath(startPos, endPos)
+    if not settings.collisionCheck then return true end
+    
+    local direction = endPos - startPos
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {char}
+    
+    local success, result = pcall(function()
+        return Workspace:Raycast(startPos, direction, raycastParams)
+    end)
+    
+    return not (success and result)
+end
+
+-- ========================================
+-- ระบบ Movement
+-- ========================================
+
+local function HumanoidMovement(targetPosition, callback)
+    if not IsCharacterValid() then
+        if callback then callback(false) end
+        return false
+    end
+    
+    humanoid.WalkSpeed = math.min(movementSpeed, 16)
+    humanoid:MoveTo(targetPosition)
+    
+    local startTime = tick()
+    local timeout = 30
+    
     local connection
-    local timeout = 30 -- หมดเวลา 30 วินาที
+    connection = RunService.Heartbeat:Connect(function()
+        if not IsCharacterValid() then
+            connection:Disconnect()
+            if callback then callback(false) end
+            return
+        end
+        
+        local distance = (rootPart.Position - targetPosition).Magnitude
+        
+        if distance < 4 then
+            connection:Disconnect()
+            if callback then callback(true) end
+        elseif tick() - startTime > timeout then
+            connection:Disconnect()
+            if callback then callback(false) end
+        end
+    end)
+    
+    return true
+end
+
+local function CFrameMovement(targetPosition, callback)
+    if not IsCharacterValid() then
+        if callback then callback(false) end
+        return false
+    end
+    
+    targetPosition = FindGroundPosition(targetPosition)
+    
+    if not CheckCollisionPath(rootPart.Position, targetPosition) then
+        return HumanoidMovement(targetPosition, callback)
+    end
+    
+    local startPos = rootPart.Position
+    local distance = (targetPosition - startPos).Magnitude
+    
+    if distance < 2 then
+        if callback then callback(true) end
+        return true
+    end
+    
+    local duration = distance / movementSpeed
     local startTime = tick()
     
-    print(string.format("[DEBUG] 🎯 เดินไป: %s", tostring(targetPos)))
-    
-    connection = RunService.Heartbeat:Connect(function(dt)
-        -- ตรวจสอบ timeout
-        if tick() - startTime > timeout then
-            warn("⏰ หมดเวลาในการเดิน - ยกเลิก")
-            done = true
-            connection:Disconnect()
-            return
-        end
-        
-        -- ตรวจสอบสถานะ Character
+    local connection
+    connection = RunService.Heartbeat:Connect(function()
         if not IsCharacterValid() then
-            done = true
             connection:Disconnect()
+            if callback then callback(false) end
             return
         end
         
-        local currentPos = rootPart.Position
-        local fixedTarget
+        local elapsed = tick() - startTime
+        local progress = math.min(elapsed / duration, 1)
         
-        -- ใช้ Y-axis ตาม waypoint หรือคงที่
-        if useFullY then
-            fixedTarget = targetPos
+        local currentPos = startPos:Lerp(targetPosition, progress)
+        currentPos = FindGroundPosition(currentPos)
+        
+        local lookDirection = (targetPosition - currentPos).Unit
+        if lookDirection.Magnitude > 0 then
+            rootPart.CFrame = CFrame.lookAt(currentPos, currentPos + lookDirection)
         else
-            fixedTarget = Vector3.new(targetPos.X, currentPos.Y, targetPos.Z)
+            rootPart.CFrame = CFrame.new(currentPos)
         end
         
-        local direction = fixedTarget - currentPos
-        local distance = direction.Magnitude
-        
-        -- ลดระยะทางที่ต้องการให้ใกล้ขึ้น
-        if distance < 3 then
-            print(string.format("[DEBUG] ✅ ถึงแล้ว! ระยะ: %.2f", distance))
-            done = true
+        if progress >= 1 then
             connection:Disconnect()
-            return
-        end
-        
-        local step = math.min(speed * dt, distance)
-        local moveVector = direction.Unit * step
-        
-        -- Debug ข้อมูล
-        if math.floor(tick()) % 2 == 0 and (tick() - math.floor(tick())) < 0.1 then
-            print(string.format("[DEBUG] 📍 ระยะ: %.2f | ความเร็ว: %.2f", distance, step/dt))
-        end
-        
-        -- ใช้ CFrame แบบปลอดภัย
-        local success, err = pcall(function()
-            if useFullY then
-                rootPart.CFrame = CFrame.new(currentPos + moveVector)
-            else
-                rootPart.CFrame = rootPart.CFrame + Vector3.new(moveVector.X, 0, moveVector.Z)
-            end
-        end)
-        
-        if not success then
-            warn("❌ ไม่สามารถเคลื่อนที่ได้:", err)
-            done = true
-            connection:Disconnect()
+            if callback then callback(true) end
         end
     end)
     
-    repeat task.wait(0.1) until done
-    return IsCharacterValid()
+    return true
 end
 
--- เดินไปยังตำแหน่งที่กำหนดด้วย Pathfinding (ปรับปรุงแล้ว)
-local function WalkToPosition(targetPos, retryCount)
-    if not targetPos or not IsCharacterValid() then return false end
-    
-    retryCount = retryCount or 0
-    moving = true
-    
-    print(string.format("[DEBUG] 🚶 เริ่มเดินไป: %s (ครั้งที่ %d)", tostring(targetPos), retryCount + 1))
-    
-    -- ลบเส้นเก่าก่อน
-    ClearAllBeams()
+-- ========================================
+-- ระบบ Pathfinding
+-- ========================================
+
+local function CreatePath(startPos, endPos)
+    local pathfindingParams = {
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        AgentJumpHeight = 50,
+        AgentCanClimb = true,
+        AgentMaxSlope = 89,
+        WaypointSpacing = 8
+    }
     
     local success, path = pcall(function()
-        return PathfindingService:CreatePath({
-            AgentRadius = 2,
-            AgentHeight = 5,
-            AgentCanJump = true,
-            AgentJumpHeight = 15,
-            AgentCanClimb = true,
-            WaypointSpacing = 8, -- เพิ่มระยะห่าง waypoint
-            Costs = {
-                Water = 20,
-                DangerousArea = math.huge
-            }
-        })
+        local newPath = PathfindingService:CreatePath(pathfindingParams)
+        newPath:ComputeAsync(startPos, endPos)
+        return newPath
     end)
     
-    if not success then
-        warn("❌ ไม่สามารถสร้าง Path ได้:", path)
-        moving = false
-        return false
+    if success and path.Status == Enum.PathStatus.Success then
+        return path
     end
     
-    local computeSuccess, err = pcall(function()
-        path:ComputeAsync(rootPart.Position, targetPos)
-    end)
-    
-    if not computeSuccess then
-        warn("❌ ไม่สามารถคำนวณ Path ได้:", err)
-        moving = false
-        return false
+    return nil
+end
+
+local function OptimizePath(waypoints)
+    if not settings.pathOptimization or #waypoints < 3 then
+        return waypoints
     end
     
-    if path.Status == Enum.PathStatus.Success then
-        local waypoints = path:GetWaypoints()
-        print(string.format("[DEBUG] 🟢 พบเส้นทาง: %d waypoints", #waypoints))
+    local optimized = {waypoints[1]}
+    
+    for i = 2, #waypoints - 1 do
+        local prevPoint = optimized[#optimized].Position
+        local nextPoint = waypoints[i + 1].Position
         
-        -- วาดเส้นทางทั้งหมด
+        if not CheckCollisionPath(prevPoint, nextPoint) then
+            table.insert(optimized, waypoints[i])
+        end
+    end
+    
+    table.insert(optimized, waypoints[#waypoints])
+    return optimized
+end
+
+-- ========================================
+-- ระบบ Navigation หลัก
+-- ========================================
+
+local function NavigateToPosition(targetPos)
+    if not targetPos or not IsCharacterValid() then return false end
+    
+    moving = true
+    local startPos = rootPart.Position
+    
+    -- Mode: CFrame Only
+    if navigationMode == "CFrame" then
+        CreateBeam(startPos, targetPos, Color3.new(0, 1, 1), 0.8)
+        
+        local success = false
+        CFrameMovement(targetPos, function(result)
+            success = result
+            moving = false
+        end)
+        
+        -- รอให้เสร็จ
+        while moving and IsCharacterValid() do
+            task.wait(0.1)
+        end
+        
+        return success
+        
+    -- Mode: Pathfinding + Movement
+    else
+        local path = CreatePath(startPos, targetPos)
+        if not path then
+            if navigationMode == "Hybrid" then
+                -- Fallback to CFrame
+                navigationMode = "CFrame"
+                local result = NavigateToPosition(targetPos)
+                navigationMode = "Hybrid"
+                return result
+            else
+                moving = false
+                return false
+            end
+        end
+        
+        local waypoints = OptimizePath(path:GetWaypoints())
+        
+        -- วาดเส้นทาง
         for i = 1, #waypoints - 1 do
             local color = waypoints[i].Action == Enum.PathWaypointAction.Jump and Color3.new(1, 1, 0) or Color3.new(0, 1, 0)
-            DrawPathLine(waypoints[i].Position, waypoints[i + 1].Position, color)
+            CreateBeam(waypoints[i].Position, waypoints[i + 1].Position, color, 0.6)
         end
         
         -- เดินตาม waypoints
@@ -219,86 +399,74 @@ local function WalkToPosition(targetPos, retryCount)
                 return false
             end
             
-            print(string.format("[DEBUG] 📍 Waypoint %d/%d: %s", i, #waypoints, tostring(wp.Position)))
-            
-            -- กระโดดถ้าจำเป็น
-            if wp.Action == Enum.PathWaypointAction.Jump then
-                print("🦘 กระโดด!")
-                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                task.wait(0.5) -- รอกระโดดให้เสร็จ
-            end
-            
-            -- ใช้ Humanoid.MoveTo แทน CFrame สำหรับการเดินที่เป็นธรรมชาติ
             local moveSuccess = false
-            local attempts = 0
+            local moveCompleted = false
             
-            while not moveSuccess and attempts < 3 do
-                attempts = attempts + 1
-                
-                -- ลองใช้ Humanoid.MoveTo ก่อน
-                humanoid:MoveTo(wp.Position)
-                local moveStart = tick()
-                
-                -- รอจนกว่าจะถึง waypoint ห또ือหมดเวลา
-                while IsCharacterValid() and isEnabled do
-                    local currentPos = rootPart.Position
-                    local distance = (wp.Position - currentPos).Magnitude
-                    
-                    if distance < 4 then
-                        moveSuccess = true
-                        break
-                    end
-                    
-                    if tick() - moveStart > 10 then -- หมดเวลา 10 วินาที
-                        print("⏰ หมดเวลา MoveTo - ลองใช้ CFrame")
-                        moveSuccess = MoveToPosition(wp.Position, true)
-                        break
-                    end
-                    
-                    task.wait(0.1)
-                end
-                
-                if not moveSuccess then
-                    print(string.format("🔄 ลองใหม่ waypoint %d (ครั้งที่ %d)", i, attempts))
-                    task.wait(1)
-                end
+            if settings.useHumanoidMovement then
+                HumanoidMovement(wp.Position, function(result)
+                    moveSuccess = result
+                    moveCompleted = true
+                end)
+            else
+                CFrameMovement(wp.Position, function(result)
+                    moveSuccess = result
+                    moveCompleted = true
+                end)
             end
             
-            if not moveSuccess then
-                warn(string.format("❌ ไม่สามารถไปถึง waypoint %d", i))
-                -- ลองต่อ waypoint ถัดไป
-                continue
+            -- รอให้เคลื่อนที่เสร็จ
+            local timeout = tick() + 15
+            while not moveCompleted and tick() < timeout do
+                task.wait(0.1)
+            end
+            
+            if wp.Action == Enum.PathWaypointAction.Jump and humanoid then
+                humanoid.Jump = true
+                task.wait(0.5)
             end
         end
         
-        print(string.format("[DEBUG] ✅ ถึงตำแหน่ง: %s", tostring(targetPos)))
         moving = false
         return true
-        
-    else
-        warn(string.format("[❌ AutoWalk] Pathfinding ล้มเหลว: %s", path.Status.Name))
-        
-        -- ลองใหม่ถ้ายังไม่ถึงจำนวนสูงสุด
-        if retryCount < maxRetries then
-            print(string.format("🔄 ลองใหม่ในอีก %d วินาที... (%d/%d)", retryDelay, retryCount + 1, maxRetries))
-            task.wait(retryDelay)
-            moving = false
-            return WalkToPosition(targetPos, retryCount + 1)
-        else
-            warn("❌ ลองครบจำนวนแล้ว - ข้ามไปตำแหน่งถัดไป")
-            moving = false
-            return false
-        end
     end
 end
 
--- ระบบ AutoFarm แบบวนลูป
-local function StartAutoFarm()
+-- ========================================
+-- ระบบ Target Management
+-- ========================================
+
+local function GetNextTarget()
+    local allTargets = {}
+    
+    for _, pos in ipairs(targetPositions) do
+        table.insert(allTargets, pos)
+    end
+    for _, pos in ipairs(customTargets) do
+        table.insert(allTargets, pos)
+    end
+    
+    if #allTargets == 0 then return nil end
+    
+    local target = allTargets[currentTargetIndex]
+    currentTargetIndex = currentTargetIndex % #allTargets + 1
+    
+    return target
+end
+
+local function AddCustomTarget(position)
+    table.insert(customTargets, position)
+    print("➕ เพิ่มตำแหน่งใหม่: " .. tostring(position))
+end
+
+-- ========================================
+-- AutoFarm Loop
+-- ========================================
+
+local function AutoFarmLoop()
     print("🤖 เริ่มระบบ AutoFarm")
     
     while isEnabled do
         if not IsCharacterValid() then
-            print("⏳ รอ Character โหลด...")
             task.wait(2)
             continue
         end
@@ -308,57 +476,33 @@ local function StartAutoFarm()
             continue
         end
         
-        local targetPos = targetPositions[currentTargetIndex]
-        if targetPos then
-            local success = WalkToPosition(targetPos)
-            
-            -- เปลี่ยนไปตำแหน่งถัดไป
-            currentTargetIndex = currentTargetIndex + 1
-            if currentTargetIndex > #targetPositions then
-                currentTargetIndex = 1 -- วนกลับไปจุดแรก
-            end
-            
-            if success then
-                print("💤 พักผ่อน 3 วินาที...")
-                task.wait(3)
-            else
-                print("💤 พักหลังล้มเหลว 5 วินาที...")
-                task.wait(5)
-            end
-        else
+        local targetPos = GetNextTarget()
+        if not targetPos then
             warn("❌ ไม่มีตำแหน่งเป้าหมาย")
             break
         end
         
-        task.wait(1) -- ป้องกัน lag
+        local success = NavigateToPosition(targetPos)
+        
+        if success then
+            print("✅ ถึงเป้าหมายแล้ว")
+            task.wait(3)
+        else
+            print("❌ ไม่สามารถไปถึงเป้าหมาย")
+            task.wait(5)
+        end
+        
+        task.wait(0.5)
     end
-end
-
--- ฟังก์ชันตั้งค่าความเร็ว
-local function SetWalkSpeed(newSpeed)
-    walkSpeed = math.clamp(newSpeed, 1, 50)
-    speed = walkSpeed -- อัพเดท speed สำหรับ CFrame movement
     
-    if IsCharacterValid() then
-        humanoid.WalkSpeed = walkSpeed
-        print(string.format("⚡ ตั้งความเร็วเป็น: %.1f", walkSpeed))
-    end
+    print("🛑 หยุดระบบ AutoFarm")
 end
 
--- ฟังก์ชันควบคุม
-local function ToggleAutoFarm()
-    isEnabled = not isEnabled
-    if isEnabled then
-        print("✅ เปิดใช้งาน AutoFarm")
-        task.spawn(StartAutoFarm)
-    else
-        print("⏹️ หยุด AutoFarm")
-        moving = false
-    end
-end
+-- ========================================
+-- GUI System
+-- ========================================
 
--- สร้าง UI สำหรับควบคุม
-local function CreateAutoFarmGUI()
+local function CreateGUI()
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "AutoFarmGUI"
     screenGui.Parent = player:WaitForChild("PlayerGui")
@@ -366,75 +510,102 @@ local function CreateAutoFarmGUI()
     
     -- Main Frame
     local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.Size = UDim2.new(0, 280, 0, 280)
+    mainFrame.Size = UDim2.new(0, 320, 0, 450)
     mainFrame.Position = UDim2.new(0, 20, 0, 20)
-    mainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
-    mainFrame.BackgroundTransparency = 0.3
+    mainFrame.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
+    mainFrame.BackgroundTransparency = 0.1
     mainFrame.BorderSizePixel = 0
     mainFrame.Parent = screenGui
     
-    -- Corner Radius
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
+    corner.CornerRadius = UDim.new(0, 12)
     corner.Parent = mainFrame
     
     -- Title
     local title = Instance.new("TextLabel")
-    title.Name = "Title"
-    title.Size = UDim2.new(1, 0, 0, 30)
-    title.Position = UDim2.new(0, 0, 0, 0)
+    title.Size = UDim2.new(1, 0, 0, 40)
     title.BackgroundTransparency = 1
-    title.Text = "🤖 AutoFarm Control"
+    title.Text = "🚀 Perfect AutoFarm"
     title.TextColor3 = Color3.new(1, 1, 1)
     title.TextScaled = true
     title.Font = Enum.Font.GothamBold
     title.Parent = mainFrame
     
-    -- Status Label
+    local yOffset = 50
+    
+    -- Status
     local statusLabel = Instance.new("TextLabel")
-    statusLabel.Name = "StatusLabel"
     statusLabel.Size = UDim2.new(1, -20, 0, 25)
-    statusLabel.Position = UDim2.new(0, 10, 0, 35)
+    statusLabel.Position = UDim2.new(0, 10, 0, yOffset)
     statusLabel.BackgroundTransparency = 1
     statusLabel.Text = "📊 สถานะ: ปิด"
-    statusLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+    statusLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
     statusLabel.TextScaled = true
     statusLabel.Font = Enum.Font.Gotham
     statusLabel.TextXAlignment = Enum.TextXAlignment.Left
     statusLabel.Parent = mainFrame
+    yOffset = yOffset + 30
     
-    -- Target Label
-    local targetLabel = Instance.new("TextLabel")
-    targetLabel.Name = "TargetLabel"
-    targetLabel.Size = UDim2.new(1, -20, 0, 25)
-    targetLabel.Position = UDim2.new(0, 10, 0, 65)
-    targetLabel.BackgroundTransparency = 1
-    targetLabel.Text = "🎯 ตำแหน่ง: 1/1"
-    targetLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
-    targetLabel.TextScaled = true
-    targetLabel.Font = Enum.Font.Gotham
-    targetLabel.TextXAlignment = Enum.TextXAlignment.Left
-    targetLabel.Parent = mainFrame
+    -- Mode Selection
+    local modeLabel = Instance.new("TextLabel")
+    modeLabel.Size = UDim2.new(1, -20, 0, 20)
+    modeLabel.Position = UDim2.new(0, 10, 0, yOffset)
+    modeLabel.BackgroundTransparency = 1
+    modeLabel.Text = "🧭 โหมดการเดิน:"
+    modeLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+    modeLabel.TextScaled = true
+    modeLabel.Font = Enum.Font.Gotham
+    modeLabel.TextXAlignment = Enum.TextXAlignment.Left
+    modeLabel.Parent = mainFrame
+    yOffset = yOffset + 25
     
-    -- Speed Settings Label
+    local modes = {"CFrame", "PathOnly", "Hybrid"}
+    local modeButtons = {}
+    
+    for i, mode in ipairs(modes) do
+        local modeBtn = Instance.new("TextButton")
+        modeBtn.Size = UDim2.new(0, 90, 0, 25)
+        modeBtn.Position = UDim2.new(0, 10 + (i-1) * 95, 0, yOffset)
+        modeBtn.BackgroundColor3 = navigationMode == mode and Color3.new(0, 0.8, 0) or Color3.new(0.3, 0.3, 0.3)
+        modeBtn.Text = mode
+        modeBtn.TextColor3 = Color3.new(1, 1, 1)
+        modeBtn.TextScaled = true
+        modeBtn.Font = Enum.Font.Gotham
+        modeBtn.BorderSizePixel = 0
+        modeBtn.Parent = mainFrame
+        
+        local btnCorner = Instance.new("UICorner")
+        btnCorner.CornerRadius = UDim.new(0, 4)
+        btnCorner.Parent = modeBtn
+        
+        modeButtons[mode] = modeBtn
+        
+        modeBtn.MouseButton1Click:Connect(function()
+            navigationMode = mode
+            for modeName, btn in pairs(modeButtons) do
+                btn.BackgroundColor3 = modeName == mode and Color3.new(0, 0.8, 0) or Color3.new(0.3, 0.3, 0.3)
+            end
+        end)
+    end
+    yOffset = yOffset + 35
+    
+    -- Speed Control
     local speedLabel = Instance.new("TextLabel")
-    speedLabel.Name = "SpeedLabel"
     speedLabel.Size = UDim2.new(1, -20, 0, 20)
-    speedLabel.Position = UDim2.new(0, 10, 0, 95)
+    speedLabel.Position = UDim2.new(0, 10, 0, yOffset)
     speedLabel.BackgroundTransparency = 1
-    speedLabel.Text = string.format("⚡ ความเร็ว: %.1f", walkSpeed)
-    speedLabel.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+    speedLabel.Text = string.format("⚡ ความเร็ว: %.1f", movementSpeed)
+    speedLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
     speedLabel.TextScaled = true
     speedLabel.Font = Enum.Font.Gotham
     speedLabel.TextXAlignment = Enum.TextXAlignment.Left
     speedLabel.Parent = mainFrame
+    yOffset = yOffset + 25
     
-    -- Speed Slider Background
+    -- Speed Slider
     local sliderBg = Instance.new("Frame")
-    sliderBg.Name = "SliderBackground"
     sliderBg.Size = UDim2.new(1, -40, 0, 8)
-    sliderBg.Position = UDim2.new(0, 20, 0, 120)
+    sliderBg.Position = UDim2.new(0, 20, 0, yOffset)
     sliderBg.BackgroundColor3 = Color3.new(0.3, 0.3, 0.3)
     sliderBg.BorderSizePixel = 0
     sliderBg.Parent = mainFrame
@@ -443,11 +614,8 @@ local function CreateAutoFarmGUI()
     sliderCorner.CornerRadius = UDim.new(0, 4)
     sliderCorner.Parent = sliderBg
     
-    -- Speed Slider Fill
     local sliderFill = Instance.new("Frame")
-    sliderFill.Name = "SliderFill"
-    sliderFill.Size = UDim2.new(walkSpeed / 50, 0, 1, 0) -- Max speed 50
-    sliderFill.Position = UDim2.new(0, 0, 0, 0)
+    sliderFill.Size = UDim2.new((movementSpeed - 3) / 17, 0, 1, 0)
     sliderFill.BackgroundColor3 = Color3.new(0, 0.8, 1)
     sliderFill.BorderSizePixel = 0
     sliderFill.Parent = sliderBg
@@ -456,64 +624,267 @@ local function CreateAutoFarmGUI()
     fillCorner.CornerRadius = UDim.new(0, 4)
     fillCorner.Parent = sliderFill
     
-    -- Speed Slider Knob
-    local sliderKnob = Instance.new("Frame")
-    sliderKnob.Name = "SliderKnob"
-    sliderKnob.Size = UDim2.new(0, 16, 0, 16)
-    sliderKnob.Position = UDim2.new(walkSpeed / 50, -8, 0.5, -8)
-    sliderKnob.BackgroundColor3 = Color3.new(1, 1, 1)
-    sliderKnob.BorderSizePixel = 0
-    sliderKnob.Parent = sliderBg
-    
-    local knobCorner = Instance.new("UICorner")
-    knobCorner.CornerRadius = UDim.new(1, 0)
-    knobCorner.Parent = sliderKnob
-    
-    -- Speed Preset Buttons
-    local speedButtonsFrame = Instance.new("Frame")
-    speedButtonsFrame.Name = "SpeedButtons"
-    speedButtonsFrame.Size = UDim2.new(1, -20, 0, 25)
-    speedButtonsFrame.Position = UDim2.new(0, 10, 0, 140)
-    speedButtonsFrame.BackgroundTransparency = 1
-    speedButtonsFrame.Parent = mainFrame
-    
-    local function createSpeedButton(text, speedValue, position)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0, 45, 1, 0)
-        btn.Position = UDim2.new(0, position, 0, 0)
-        btn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
-        btn.Text = text
-        btn.TextColor3 = Color3.new(1, 1, 1)
-        btn.TextScaled = true
-        btn.Font = Enum.Font.Gotham
-        btn.BorderSizePixel = 0
-        btn.Parent = speedButtonsFrame
-        
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, 4)
-        btnCorner.Parent = btn
-        
-        btn.MouseButton1Click:Connect(function()
-            SetWalkSpeed(speedValue)
-            UpdateSpeedUI()
-        end)
-        
-        return btn
+    -- Slider interaction
+    local sliderDragging = false
+    local function updateSpeed(input)
+        local relativeX = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
+        movementSpeed = math.floor((relativeX * 17 + 3) * 10) / 10
+        sliderFill.Size = UDim2.new(relativeX, 0, 1, 0)
+        speedLabel.Text = string.format("⚡ ความเร็ว: %.1f", movementSpeed)
     end
     
-    createSpeedButton("ช้า", 8, 0)
-    createSpeedButton("ปกติ", 16, 55)
-    createSpeedButton("เร็ว", 25, 110)
-    createSpeedButton("รวดเร็ว", 35, 165)
-    createSpeedButton("สุดๆ", 50, 220)
+    sliderBg.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            sliderDragging = true
+            updateSpeed(input)
+        end
+    end)
     
-    -- Start/Stop Button
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    
+    UpdateUI()
+    print("🎮 สร้าง GUI เรียบร้อย!")
+end
+
+-- ========================================
+-- ระบบตรวจจับการติดขัด
+-- ========================================
+
+local stuckDetection = {
+    lastPosition = nil,
+    stuckTime = 0,
+    stuckThreshold = 5,
+    minMovement = 2
+}
+
+local function CheckStuckStatus()
+    if not IsCharacterValid() or not moving then return false end
+    
+    local currentPos = rootPart.Position
+    
+    if stuckDetection.lastPosition then
+        local movement = (currentPos - stuckDetection.lastPosition).Magnitude
+        
+        if movement < stuckDetection.minMovement then
+            stuckDetection.stuckTime = stuckDetection.stuckTime + 1
+        else
+            stuckDetection.stuckTime = 0
+        end
+        
+        if stuckDetection.stuckTime >= stuckDetection.stuckThreshold then
+            print("⚠️ ตรวจพบการติดขัด")
+            
+            -- แก้ไขการติดขัด
+            if humanoid then
+                humanoid.Jump = true
+                task.wait(0.5)
+                
+                -- พยายามเคลื่อนที่ไปทิศทางอื่น
+                local escapePos = currentPos + Vector3.new(
+                    math.random(-5, 5),
+                    0,
+                    math.random(-5, 5)
+                )
+                humanoid:MoveTo(escapePos)
+            end
+            
+            stuckDetection.stuckTime = 0
+            return true
+        end
+    end
+    
+    stuckDetection.lastPosition = currentPos
+    return false
+end
+
+-- ========================================
+-- ระบบ Auto-Recovery
+-- ========================================
+
+local function AutoRecovery()
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            
+            if settings.stuckDetection and isEnabled then
+                CheckStuckStatus()
+            end
+            
+            -- ตรวจสอบ Character
+            if isEnabled and not IsCharacterValid() then
+                print("🔄 รอ Character กลับมา...")
+                moving = false
+                
+                repeat task.wait(1) until IsCharacterValid()
+                print("✅ Character กลับมาแล้ว")
+            end
+        end
+    end)
+end
+
+-- ========================================
+-- Debug Info Panel
+-- ========================================
+
+local function CreateDebugInfo()
+    if not settings.showDebugInfo or debugGui then return end
+    
+    debugGui = Instance.new("ScreenGui")
+    debugGui.Name = "NavigationDebug"
+    debugGui.Parent = player:WaitForChild("PlayerGui")
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 250, 0, 120)
+    frame.Position = UDim2.new(1, -260, 0, 20)
+    frame.BackgroundColor3 = Color3.new(0, 0, 0)
+    frame.BackgroundTransparency = 0.3
+    frame.BorderSizePixel = 0
+    frame.Parent = debugGui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = frame
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 25)
+    title.BackgroundTransparency = 1
+    title.Text = "🔍 Debug Info"
+    title.TextColor3 = Color3.new(1, 1, 1)
+    title.TextScaled = true
+    title.Font = Enum.Font.GothamBold
+    title.Parent = frame
+    
+    local infoLabel = Instance.new("TextLabel")
+    infoLabel.Name = "InfoLabel"
+    infoLabel.Size = UDim2.new(1, -10, 1, -30)
+    infoLabel.Position = UDim2.new(0, 5, 0, 25)
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.Text = "Initializing..."
+    infoLabel.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+    infoLabel.TextSize = 11
+    infoLabel.Font = Enum.Font.Code
+    infoLabel.TextXAlignment = Enum.TextXAlignment.Left
+    infoLabel.TextYAlignment = Enum.TextYAlignment.Top
+    infoLabel.TextWrapped = true
+    infoLabel.Parent = frame
+    
+    -- Update debug info
+    task.spawn(function()
+        while debugGui and debugGui.Parent do
+            if IsCharacterValid() then
+                local pos = rootPart.Position
+                local vel = rootPart.AssemblyLinearVelocity.Magnitude
+                
+                infoLabel.Text = string.format(
+                    "Pos: %.1f, %.1f, %.1f\nSpeed: %.1f\nMode: %s\nTargets: %d\nMoving: %s",
+                    pos.X, pos.Y, pos.Z,
+                    vel,
+                    navigationMode,
+                    #targetPositions + #customTargets,
+                    tostring(moving)
+                )
+            end
+            task.wait(0.5)
+        end
+    end)
+end
+
+-- ========================================
+-- เริ่มต้นระบบ
+-- ========================================
+
+local function Initialize()
+    print("🚀 กำลังเริ่มต้น Perfect AutoFarm Navigation System...")
+    print("📌 Version: 2.0 - Complete Edition")
+    
+    -- สร้าง GUI
+    CreateGUI()
+    
+    -- สร้าง Debug Info
+    if settings.showDebugInfo then
+        CreateDebugInfo()
+    end
+    
+    -- เริ่ม Auto-Recovery
+    AutoRecovery()
+    
+    -- ข้อความต้อนรับ
+    print("✅ Perfect AutoFarm Navigation System พร้อมใช้งาน!")
+    print("🎮 คุณสมบัติหลัก:")
+    print("   • 3 โหมดการเดิน: CFrame, PathOnly, Hybrid")
+    print("   • ระบบป้องกันการติดขัด")
+    print("   • การตรวจสอบ Collision และพื้น")
+    print("   • Pathfinding ขั้นสูง")
+    print("   • GUI ที่ใช้งานง่าย")
+    print("   • ระบบ Debug แบบ Real-time")
+    print("💡 กด Title บน GUI เพื่อลากย้าย")
+end
+
+-- เริ่มต้นเมื่อโหลดเสร็จ
+task.wait(1)
+Initialize()Changed:Connect(function(input)
+        if sliderDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            updateSpeed(input)
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            sliderDragging = false
+        end
+    end)
+    
+    yOffset = yOffset + 20
+    
+    -- Settings Toggles
+    local settingsToggles = {
+        {key = "useHumanoidMovement", label = "🚶 Humanoid Movement"},
+        {key = "collisionCheck", label = "🔍 ตรวจสอบ Collision"},
+        {key = "safeMovement", label = "🛡️ Safe Movement"},
+        {key = "groundCheck", label = "🌍 ตรวจสอบพื้น"},
+        {key = "showPath", label = "🌈 แสดงเส้นทาง"},
+        {key = "pathOptimization", label = "🔧 ปรับปรุงเส้นทาง"}
+    }
+    
+    for i, setting in ipairs(settingsToggles) do
+        local toggleBtn = Instance.new("TextButton")
+        toggleBtn.Size = UDim2.new(1, -20, 0, 25)
+        toggleBtn.Position = UDim2.new(0, 10, 0, yOffset)
+        toggleBtn.BackgroundColor3 = settings[setting.key] and Color3.new(0, 0.6, 0) or Color3.new(0.6, 0, 0)
+        toggleBtn.Text = setting.label .. (settings[setting.key] and " ✅" or " ❌")
+        toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+        toggleBtn.TextSize = 12
+        toggleBtn.Font = Enum.Font.Gotham
+        toggleBtn.BorderSizePixel = 0
+        toggleBtn.Parent = mainFrame
+        
+        local toggleCorner = Instance.new("UICorner")
+        toggleCorner.CornerRadius = UDim.new(0, 4)
+        toggleCorner.Parent = toggleBtn
+        
+        toggleBtn.MouseButton1Click:Connect(function()
+            settings[setting.key] = not settings[setting.key]
+            toggleBtn.BackgroundColor3 = settings[setting.key] and Color3.new(0, 0.6, 0) or Color3.new(0.6, 0, 0)
+            toggleBtn.Text = setting.label .. (settings[setting.key] and " ✅" or " ❌")
+            
+            if setting.key == "showPath" and not settings[setting.key] then
+                ClearAllBeams()
+            end
+        end)
+        
+        yOffset = yOffset + 30
+    end
+    
+    -- Control Buttons
     local toggleButton = Instance.new("TextButton")
-    toggleButton.Name = "ToggleButton"
-    toggleButton.Size = UDim2.new(1, -20, 0, 35)
-    toggleButton.Position = UDim2.new(0, 10, 0, 180)
-    toggleButton.BackgroundColor3 = Color3.new(0, 0.6, 0)
-    toggleButton.Text = "▶️ เริ่มระบบ"
+    toggleButton.Size = UDim2.new(1, -20, 0, 40)
+    toggleButton.Position = UDim2.new(0, 10, 0, yOffset)
+    toggleButton.BackgroundColor3 = Color3.new(0, 0.8, 0)
+    toggleButton.Text = "🚀 เริ่มระบบ AutoFarm"
     toggleButton.TextColor3 = Color3.new(1, 1, 1)
     toggleButton.TextScaled = true
     toggleButton.Font = Enum.Font.GothamBold
@@ -521,141 +892,96 @@ local function CreateAutoFarmGUI()
     toggleButton.Parent = mainFrame
     
     local toggleCorner = Instance.new("UICorner")
-    toggleCorner.CornerRadius = UDim.new(0, 6)
+    toggleCorner.CornerRadius = UDim.new(0, 8)
     toggleCorner.Parent = toggleButton
     
-    -- Status Button
-    local statusButton = Instance.new("TextButton")
-    statusButton.Name = "StatusButton"
-    statusButton.Size = UDim2.new(1, -20, 0, 25)
-    statusButton.Position = UDim2.new(0, 10, 0, 225)
-    statusButton.BackgroundColor3 = Color3.new(0, 0.4, 0.8)
-    statusButton.Text = "📊 อัพเดทสถานะ"
-    statusButton.TextColor3 = Color3.new(1, 1, 1)
-    statusButton.TextScaled = true
-    statusButton.Font = Enum.Font.Gotham
-    statusButton.BorderSizePixel = 0
-    statusButton.Parent = mainFrame
+    yOffset = yOffset + 50
     
-    local statusCorner = Instance.new("UICorner")
-    statusCorner.CornerRadius = UDim.new(0, 4)
-    statusCorner.Parent = statusButton
+    -- Add Target Button
+    local addTargetBtn = Instance.new("TextButton")
+    addTargetBtn.Size = UDim2.new(1, -20, 0, 30)
+    addTargetBtn.Position = UDim2.new(0, 10, 0, yOffset)
+    addTargetBtn.BackgroundColor3 = Color3.new(0, 0.4, 0.8)
+    addTargetBtn.Text = "📍 เพิ่มตำแหน่งปัจจุบัน"
+    addTargetBtn.TextColor3 = Color3.new(1, 1, 1)
+    addTargetBtn.TextScaled = true
+    addTargetBtn.Font = Enum.Font.Gotham
+    addTargetBtn.BorderSizePixel = 0
+    addTargetBtn.Parent = mainFrame
     
-    -- Toggle minimized state
-    local isMinimized = false
-    local originalSize = mainFrame.Size
-    
-    -- Double click to minimize
-    title.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            local currentTime = tick()
-            if title:GetAttribute("LastClick") and (currentTime - title:GetAttribute("LastClick")) < 0.5 then
-                -- Double click detected
-                isMinimized = not isMinimized
-                if isMinimized then
-                    mainFrame:TweenSize(UDim2.new(0, 280, 0, 35), "Out", "Quad", 0.3, true)
-                    title.Text = "🤖 AutoFarm (คลิกเพื่อขยาย)"
-                else
-                    mainFrame:TweenSize(originalSize, "Out", "Quad", 0.3, true)
-                    title.Text = "🤖 AutoFarm Control"
-                end
-            end
-            title:SetAttribute("LastClick", currentTime)
-        end
-    end)
-    
-    -- Speed Slider Functions
-    local function UpdateSpeedUI()
-        speedLabel.Text = string.format("⚡ ความเร็ว: %.1f", walkSpeed)
-        sliderFill.Size = UDim2.new(walkSpeed / 50, 0, 1, 0)
-        sliderKnob.Position = UDim2.new(walkSpeed / 50, -8, 0.5, -8)
-    end
-    
-    -- Speed Slider Interaction
-    local dragging = false
-    local function updateSlider(input)
-        local relativeX = (input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X
-        relativeX = math.clamp(relativeX, 0, 1)
-        local newSpeed = math.floor(relativeX * 50 * 10) / 10 -- Round to 1 decimal
-        newSpeed = math.max(1, newSpeed) -- Minimum speed 1
-        SetWalkSpeed(newSpeed)
-        UpdateSpeedUI()
-    end
-    
-    sliderBg.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            updateSlider(input)
-        end
-    end)
-    
-    sliderBg.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            updateSlider(input)
-        end
-    end)
-    
-    sliderBg.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
+    local addCorner = Instance.new("UICorner")
+    addCorner.CornerRadius = UDim.new(0, 6)
+    addCorner.Parent = addTargetBtn
     
     -- Update UI function
     local function UpdateUI()
-        if isMinimized then return end
-        
-        statusLabel.Text = string.format("📊 สถานะ: %s %s", 
+        local totalTargets = #targetPositions + #customTargets
+        statusLabel.Text = string.format("📊 สถานะ: %s %s | เป้าหมาย: %d/%d", 
             isEnabled and "🟢 เปิด" or "🔴 ปิด",
-            moving and "(กำลังเดิน)" or ""
+            moving and "(กำลังเดิน)" or "",
+            totalTargets > 0 and currentTargetIndex or 0,
+            totalTargets
         )
-        targetLabel.Text = string.format("🎯 ตำแหน่ง: %d/%d", currentTargetIndex, #targetPositions)
-        UpdateSpeedUI()
         
         if isEnabled then
             toggleButton.BackgroundColor3 = Color3.new(0.8, 0, 0)
-            toggleButton.Text = "⏹️ หยุดระบบ"
+            toggleButton.Text = "⏹️ หยุดระบบ AutoFarm"
         else
-            toggleButton.BackgroundColor3 = Color3.new(0, 0.6, 0)
-            toggleButton.Text = "▶️ เริ่มระบบ"
+            toggleButton.BackgroundColor3 = Color3.new(0, 0.8, 0)
+            toggleButton.Text = "🚀 เริ่มระบบ AutoFarm"
         end
     end
     
     -- Button Events
     toggleButton.MouseButton1Click:Connect(function()
-        ToggleAutoFarm()
+        isEnabled = not isEnabled
+        if isEnabled then
+            task.spawn(AutoFarmLoop)
+        else
+            moving = false
+            ClearAllBeams()
+        end
         UpdateUI()
     end)
     
-    statusButton.MouseButton1Click:Connect(function()
-        UpdateUI()
-        -- Visual feedback
-        statusButton.BackgroundColor3 = Color3.new(0, 0.6, 1)
-        task.wait(0.1)
-        statusButton.BackgroundColor3 = Color3.new(0, 0.4, 0.8)
-    end)
-    
-    -- Auto update every 2 seconds
-    task.spawn(function()
-        while screenGui.Parent do
+    addTargetBtn.MouseButton1Click:Connect(function()
+        if IsCharacterValid() then
+            AddCustomTarget(rootPart.Position)
             UpdateUI()
-            task.wait(2)
         end
     end)
     
-    -- Initial UI update
-    UpdateUI()
-    print("🎮 สร้าง AutoFarm GUI เรียบร้อย! (ดับเบิลคลิกชื่อเพื่อย่อ/ขยาย)")
-end
-
--- เริ่มต้นระบบ
-task.wait(2) -- รอโหลดฉากให้เสร็จ
-print("🎮 ระบบ AutoWalk พร้อมใช้งาน!")
-
--- ตั้งค่าความเร็วเริ่มต้น
-SetWalkSpeed(walkSpeed)
-
-CreateAutoFarmGUI()
-
--- เริ่มอัตโนมัติ (ถ้าต้องการ)
--- ToggleAutoFarm()
+    -- Auto update
+    task.spawn(function()
+        while screenGui.Parent do
+            UpdateUI()
+            task.wait(1)
+        end
+    end)
+    
+    -- Draggable
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+    
+    title.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = mainFrame.Position
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    
+    UserInputService.Input
