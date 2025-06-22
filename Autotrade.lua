@@ -231,9 +231,11 @@ local function HumanoidMovement(targetPosition, callback)
         if distance < 4 then
             connection:Disconnect()
             if callback then callback(true) end
+            return -- Added return to prevent further execution after success
         elseif tick() - startTime > timeout then
             connection:Disconnect()
             if callback then callback(false) end
+            return -- Added return to prevent further execution after timeout
         end
     end)
     
@@ -287,6 +289,7 @@ local function CFrameMovement(targetPosition, callback)
         if progress >= 1 then
             connection:Disconnect()
             if callback then callback(true) end
+            return -- Added return to prevent further execution after completion
         end
     end)
     
@@ -640,13 +643,170 @@ local function CreateGUI()
         end
     end)
     
+    UserInputService.InputChanged:Connect(function(input)
+        if sliderDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            updateSpeed(input)
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            sliderDragging = false
+        end
+    end)
+    
+    yOffset = yOffset + 20
+    
+    -- Settings Toggles
+    local settingsToggles = {
+        {key = "useHumanoidMovement", label = "🚶 Humanoid Movement"},
+        {key = "collisionCheck", label = "🔍 ตรวจสอบ Collision"},
+        {key = "safeMovement", label = "🛡️ Safe Movement"},
+        {key = "groundCheck", label = "🌍 ตรวจสอบพื้น"},
+        {key = "showPath", label = "🌈 แสดงเส้นทาง"},
+        {key = "pathOptimization", label = "🔧 ปรับปรุงเส้นทาง"}
+    }
+    
+    for i, setting in ipairs(settingsToggles) do
+        local toggleBtn = Instance.new("TextButton")
+        toggleBtn.Size = UDim2.new(1, -20, 0, 25)
+        toggleBtn.Position = UDim2.new(0, 10, 0, yOffset)
+        toggleBtn.BackgroundColor3 = settings[setting.key] and Color3.new(0, 0.6, 0) or Color3.new(0.6, 0, 0)
+        toggleBtn.Text = setting.label .. (settings[setting.key] and " ✅" or " ❌")
+        toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+        toggleBtn.TextSize = 12
+        toggleBtn.Font = Enum.Font.Gotham
+        toggleBtn.BorderSizePixel = 0
+        toggleBtn.Parent = mainFrame
+        
+        local toggleCorner = Instance.new("UICorner")
+        toggleCorner.CornerRadius = UDim.new(0, 4)
+        toggleCorner.Parent = toggleBtn
+        
+        toggleBtn.MouseButton1Click:Connect(function()
+            settings[setting.key] = not settings[setting.key]
+            toggleBtn.BackgroundColor3 = settings[setting.key] and Color3.new(0, 0.6, 0) or Color3.new(0.6, 0, 0)
+            toggleBtn.Text = setting.label .. (settings[setting.key] and " ✅" or " ❌")
+            
+            if setting.key == "showPath" and not settings[setting.key] then
+                ClearAllBeams()
+            end
+        end)
+        
+        yOffset = yOffset + 30
+    end
+    
+    -- Control Buttons
+    local toggleButton = Instance.new("TextButton")
+    toggleButton.Size = UDim2.new(1, -20, 0, 40)
+    toggleButton.Position = UDim2.new(0, 10, 0, yOffset)
+    toggleButton.BackgroundColor3 = Color3.new(0, 0.8, 0)
+    toggleButton.Text = "🚀 เริ่มระบบ AutoFarm"
+    toggleButton.TextColor3 = Color3.new(1, 1, 1)
+    toggleButton.TextScaled = true
+    toggleButton.Font = Enum.Font.GothamBold
+    toggleButton.BorderSizePixel = 0
+    toggleButton.Parent = mainFrame
+    
+    local toggleCorner = Instance.new("UICorner")
+    toggleCorner.CornerRadius = UDim.new(0, 8)
+    toggleCorner.Parent = toggleButton
+    
+    yOffset = yOffset + 50
+    
+    -- Add Target Button
+    local addTargetBtn = Instance.new("TextButton")
+    addTargetBtn.Size = UDim2.new(1, -20, 0, 30)
+    addTargetBtn.Position = UDim2.new(0, 10, 0, yOffset)
+    addTargetBtn.BackgroundColor3 = Color3.new(0, 0.4, 0.8)
+    addTargetBtn.Text = "📍 เพิ่มตำแหน่งปัจจุบัน"
+    addTargetBtn.TextColor3 = Color3.new(1, 1, 1)
+    addTargetBtn.TextScaled = true
+    addTargetBtn.Font = Enum.Font.Gotham
+    addTargetBtn.BorderSizePixel = 0
+    addTargetBtn.Parent = mainFrame
+    
+    local addCorner = Instance.new("UICorner")
+    addCorner.CornerRadius = UDim.new(0, 6)
+    addCorner.Parent = addTargetBtn
+    
+    -- Update UI function
+    local function UpdateUI()
+        local totalTargets = #targetPositions + #customTargets
+        statusLabel.Text = string.format("📊 สถานะ: %s %s | เป้าหมาย: %d/%d", 
+            isEnabled and "🟢 เปิด" or "🔴 ปิด",
+            moving and "(กำลังเดิน)" or "",
+            totalTargets > 0 and currentTargetIndex or 0,
+            totalTargets
+        )
+        
+        if isEnabled then
+            toggleButton.BackgroundColor3 = Color3.new(0.8, 0, 0)
+            toggleButton.Text = "⏹️ หยุดระบบ AutoFarm"
+        else
+            toggleButton.BackgroundColor3 = Color3.new(0, 0.8, 0)
+            toggleButton.Text = "🚀 เริ่มระบบ AutoFarm"
+        end
+    end
+    
+    -- Button Events
+    toggleButton.MouseButton1Click:Connect(function()
+        isEnabled = not isEnabled
+        if isEnabled then
+            task.spawn(AutoFarmLoop)
+        else
+            moving = false
+            ClearAllBeams()
+        end
+        UpdateUI()
+    end)
+    
+    addTargetBtn.MouseButton1Click:Connect(function()
+        if IsCharacterValid() then
+            AddCustomTarget(rootPart.Position)
+            UpdateUI()
+        end
+    end)
+    
+    -- Auto update
+    task.spawn(function()
+        while screenGui.Parent do
+            UpdateUI()
+            task.wait(1)
+        end
+    end)
+    
+    -- Draggable
+    local dragging = false
+    local dragStart = nil
+    local startPos = nil
+    
+    title.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = mainFrame.Position
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
         end
     end)
     
-    UpdateUI()
     print("🎮 สร้าง GUI เรียบร้อย!")
 end
 
@@ -815,177 +975,15 @@ local function Initialize()
     -- ข้อความต้อนรับ
     print("✅ Perfect AutoFarm Navigation System พร้อมใช้งาน!")
     print("🎮 คุณสมบัติหลัก:")
-    print("   • 3 โหมดการเดิน: CFrame, PathOnly, Hybrid")
-    print("   • ระบบป้องกันการติดขัด")
-    print("   • การตรวจสอบ Collision และพื้น")
-    print("   • Pathfinding ขั้นสูง")
-    print("   • GUI ที่ใช้งานง่าย")
-    print("   • ระบบ Debug แบบ Real-time")
+    print("    • 3 โหมดการเดิน: CFrame, PathOnly, Hybrid")
+    print("    • ระบบป้องกันการติดขัด")
+    print("    • การตรวจสอบ Collision และพื้น")
+    print("    • Pathfinding ขั้นสูง")
+    print("    • GUI ที่ใช้งานง่าย")
+    print("    • ระบบ Debug แบบ Real-time")
     print("💡 กด Title บน GUI เพื่อลากย้าย")
 end
 
 -- เริ่มต้นเมื่อโหลดเสร็จ
 task.wait(1)
-Initialize()Changed:Connect(function(input)
-        if sliderDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            updateSpeed(input)
-        end
-    end)
-    
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            sliderDragging = false
-        end
-    end)
-    
-    yOffset = yOffset + 20
-    
-    -- Settings Toggles
-    local settingsToggles = {
-        {key = "useHumanoidMovement", label = "🚶 Humanoid Movement"},
-        {key = "collisionCheck", label = "🔍 ตรวจสอบ Collision"},
-        {key = "safeMovement", label = "🛡️ Safe Movement"},
-        {key = "groundCheck", label = "🌍 ตรวจสอบพื้น"},
-        {key = "showPath", label = "🌈 แสดงเส้นทาง"},
-        {key = "pathOptimization", label = "🔧 ปรับปรุงเส้นทาง"}
-    }
-    
-    for i, setting in ipairs(settingsToggles) do
-        local toggleBtn = Instance.new("TextButton")
-        toggleBtn.Size = UDim2.new(1, -20, 0, 25)
-        toggleBtn.Position = UDim2.new(0, 10, 0, yOffset)
-        toggleBtn.BackgroundColor3 = settings[setting.key] and Color3.new(0, 0.6, 0) or Color3.new(0.6, 0, 0)
-        toggleBtn.Text = setting.label .. (settings[setting.key] and " ✅" or " ❌")
-        toggleBtn.TextColor3 = Color3.new(1, 1, 1)
-        toggleBtn.TextSize = 12
-        toggleBtn.Font = Enum.Font.Gotham
-        toggleBtn.BorderSizePixel = 0
-        toggleBtn.Parent = mainFrame
-        
-        local toggleCorner = Instance.new("UICorner")
-        toggleCorner.CornerRadius = UDim.new(0, 4)
-        toggleCorner.Parent = toggleBtn
-        
-        toggleBtn.MouseButton1Click:Connect(function()
-            settings[setting.key] = not settings[setting.key]
-            toggleBtn.BackgroundColor3 = settings[setting.key] and Color3.new(0, 0.6, 0) or Color3.new(0.6, 0, 0)
-            toggleBtn.Text = setting.label .. (settings[setting.key] and " ✅" or " ❌")
-            
-            if setting.key == "showPath" and not settings[setting.key] then
-                ClearAllBeams()
-            end
-        end)
-        
-        yOffset = yOffset + 30
-    end
-    
-    -- Control Buttons
-    local toggleButton = Instance.new("TextButton")
-    toggleButton.Size = UDim2.new(1, -20, 0, 40)
-    toggleButton.Position = UDim2.new(0, 10, 0, yOffset)
-    toggleButton.BackgroundColor3 = Color3.new(0, 0.8, 0)
-    toggleButton.Text = "🚀 เริ่มระบบ AutoFarm"
-    toggleButton.TextColor3 = Color3.new(1, 1, 1)
-    toggleButton.TextScaled = true
-    toggleButton.Font = Enum.Font.GothamBold
-    toggleButton.BorderSizePixel = 0
-    toggleButton.Parent = mainFrame
-    
-    local toggleCorner = Instance.new("UICorner")
-    toggleCorner.CornerRadius = UDim.new(0, 8)
-    toggleCorner.Parent = toggleButton
-    
-    yOffset = yOffset + 50
-    
-    -- Add Target Button
-    local addTargetBtn = Instance.new("TextButton")
-    addTargetBtn.Size = UDim2.new(1, -20, 0, 30)
-    addTargetBtn.Position = UDim2.new(0, 10, 0, yOffset)
-    addTargetBtn.BackgroundColor3 = Color3.new(0, 0.4, 0.8)
-    addTargetBtn.Text = "📍 เพิ่มตำแหน่งปัจจุบัน"
-    addTargetBtn.TextColor3 = Color3.new(1, 1, 1)
-    addTargetBtn.TextScaled = true
-    addTargetBtn.Font = Enum.Font.Gotham
-    addTargetBtn.BorderSizePixel = 0
-    addTargetBtn.Parent = mainFrame
-    
-    local addCorner = Instance.new("UICorner")
-    addCorner.CornerRadius = UDim.new(0, 6)
-    addCorner.Parent = addTargetBtn
-    
-    -- Update UI function
-    local function UpdateUI()
-        local totalTargets = #targetPositions + #customTargets
-        statusLabel.Text = string.format("📊 สถานะ: %s %s | เป้าหมาย: %d/%d", 
-            isEnabled and "🟢 เปิด" or "🔴 ปิด",
-            moving and "(กำลังเดิน)" or "",
-            totalTargets > 0 and currentTargetIndex or 0,
-            totalTargets
-        )
-        
-        if isEnabled then
-            toggleButton.BackgroundColor3 = Color3.new(0.8, 0, 0)
-            toggleButton.Text = "⏹️ หยุดระบบ AutoFarm"
-        else
-            toggleButton.BackgroundColor3 = Color3.new(0, 0.8, 0)
-            toggleButton.Text = "🚀 เริ่มระบบ AutoFarm"
-        end
-    end
-    
-    -- Button Events
-    toggleButton.MouseButton1Click:Connect(function()
-        isEnabled = not isEnabled
-        if isEnabled then
-            task.spawn(AutoFarmLoop)
-        else
-            moving = false
-            ClearAllBeams()
-        end
-        UpdateUI()
-    end)
-    
-    addTargetBtn.MouseButton1Click:Connect(function()
-        if IsCharacterValid() then
-            AddCustomTarget(rootPart.Position)
-            UpdateUI()
-        end
-    end)
-    
-    -- Auto update
-    task.spawn(function()
-        while screenGui.Parent do
-            UpdateUI()
-            task.wait(1)
-        end
-    end)
-    
-    -- Draggable
-    local dragging = false
-    local dragStart = nil
-    local startPos = nil
-    
-    title.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = mainFrame.Position
-        end
-    end)
-    
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            local delta = input.Position - dragStart
-            mainFrame.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
--- เพิ่มปิดการ drag GUI ให้สมบูรณ์
-title.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = false
-    end
-end)
+Initialize()
