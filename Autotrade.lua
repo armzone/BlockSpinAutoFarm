@@ -983,5 +983,3 @@ Initialize()Changed:Connect(function(input)
             )
         end
     end)
-    
-    UserInputService.Input
