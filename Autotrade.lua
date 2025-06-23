@@ -1,6 +1,6 @@
 -- ========================================
--- Perfect AutoFarm - CFrame Only Version
--- ควบคุมผ่าน _G | เรียบง่าย รวดเร็ว
+-- Perfect AutoFarm - Anti-Noclip Bypass
+-- เคลื่อนที่ข้ามสิ่งกีดขวางด้วยการยกตัวสูง
 -- ========================================
 
 -- ตั้งค่าเริ่มต้น
@@ -8,8 +8,10 @@ _G.AutoFarm = true              -- เปิด/ปิด AutoFarm
 _G.Speed = 16                    -- ความเร็ว (1-50)
 _G.WaitTime = 3                  -- เวลารอที่จุด (วินาที)
 _G.ShowNotifications = true      -- แสดงการแจ้งเตือน
-_G.SmoothMovement = true         -- เคลื่อนที่แบบนุ่มนวล (false = teleport)
-_G.HeightOffset = 3              -- ความสูงจากพื้น
+_G.FlyHeight = 50                -- ความสูงที่จะบินข้าม (ปรับได้)
+_G.SafeMode = true               -- ใช้ระบบหลีกเลี่ยง Anti-Noclip
+_G.CheckObstacles = true         -- ตรวจสอบสิ่งกีดขวาง
+_G.SlowApproach = true           -- เข้าใกล้เป้าหมายช้าๆ
 
 -- ตำแหน่งเป้าหมาย
 _G.Targets = {
@@ -21,6 +23,7 @@ _G.Targets = {
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
+local Workspace = game:GetService("Workspace")
 
 -- Player
 local player = Players.LocalPlayer
@@ -53,25 +56,161 @@ local function isCharacterValid()
 end
 
 -- ========================================
--- CFrame Movement
+-- Ray Check Functions
 -- ========================================
 
-local function cframeMove(targetPos)
-    if not isCharacterValid() then return false end
+local function checkObstaclesBetween(startPos, endPos)
+    if not _G.CheckObstacles then return false end
     
-    -- Add height offset
-    targetPos = targetPos + Vector3.new(0, _G.HeightOffset, 0)
+    local direction = (endPos - startPos)
+    local distance = direction.Magnitude
+    
+    if distance < 0.1 then return false end
+    
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {char}
+    raycastParams.IgnoreWater = true
+    
+    local result = Workspace:Raycast(startPos, direction, raycastParams)
+    
+    return result ~= nil
+end
+
+local function findGroundBelow(position)
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {char}
+    
+    local result = Workspace:Raycast(
+        position + Vector3.new(0, 5, 0),
+        Vector3.new(0, -1000, 0),
+        raycastParams
+    )
+    
+    if result then
+        return result.Position.Y
+    end
+    
+    return position.Y - 100
+end
+
+local function findCeilingAbove(position)
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {char}
+    
+    local result = Workspace:Raycast(
+        position,
+        Vector3.new(0, 1000, 0),
+        raycastParams
+    )
+    
+    if result then
+        return result.Position.Y
+    end
+    
+    return position.Y + 1000
+end
+
+-- ========================================
+-- Safe Movement Functions
+-- ========================================
+
+local function safeMove(targetPos)
+    if not isCharacterValid() then return false end
     
     local startPos = rootPart.Position
     local distance = (targetPos - startPos).Magnitude
     
-    -- If already close enough
     if distance < 3 then return true end
     
     moving = true
     
-    if _G.SmoothMovement then
-        -- Smooth movement
+    -- ตรวจสอบว่ามีสิ่งกีดขวางหรือไม่
+    local hasObstacle = checkObstaclesBetween(startPos, targetPos)
+    
+    if hasObstacle and _G.SafeMode then
+        notify("Navigation", "Obstacle detected, flying over...")
+        
+        -- Phase 1: ยกตัวขึ้นสูง
+        local flyHeight = _G.FlyHeight
+        local maxHeight = findCeilingAbove(startPos) - 10
+        flyHeight = math.min(flyHeight, maxHeight - startPos.Y)
+        
+        local upPosition = Vector3.new(startPos.X, startPos.Y + flyHeight, startPos.Z)
+        
+        -- เคลื่อนที่ขึ้นด้านบน
+        local upDuration = flyHeight / (_G.Speed * 0.5) -- ขึ้นช้าลงเพื่อความปลอดภัย
+        local upStartTime = tick()
+        
+        while tick() - upStartTime < upDuration and _G.AutoFarm do
+            if not isCharacterValid() then 
+                moving = false
+                return false 
+            end
+            
+            local progress = (tick() - upStartTime) / upDuration
+            local currentY = startPos.Y + (flyHeight * progress)
+            
+            rootPart.CFrame = CFrame.new(startPos.X, currentY, startPos.Z)
+            RunService.Heartbeat:Wait()
+        end
+        
+        -- Phase 2: เคลื่อนที่ไปยังเป้าหมาย (บนอากาศ)
+        local airTarget = Vector3.new(targetPos.X, upPosition.Y, targetPos.Z)
+        local airDistance = (airTarget - upPosition).Magnitude
+        local airDuration = airDistance / _G.Speed
+        local airStartTime = tick()
+        
+        while tick() - airStartTime < airDuration and _G.AutoFarm do
+            if not isCharacterValid() then 
+                moving = false
+                return false 
+            end
+            
+            local progress = (tick() - airStartTime) / airDuration
+            local currentPos = upPosition:Lerp(airTarget, progress)
+            
+            -- หันหน้าไปทางเป้าหมาย
+            local lookDirection = (airTarget - currentPos).Unit
+            if lookDirection.Magnitude > 0 then
+                rootPart.CFrame = CFrame.lookAt(currentPos, currentPos + lookDirection)
+            else
+                rootPart.CFrame = CFrame.new(currentPos)
+            end
+            
+            RunService.Heartbeat:Wait()
+        end
+        
+        -- Phase 3: ลงมาที่เป้าหมาย
+        local groundY = findGroundBelow(targetPos) + 3
+        local finalTarget = Vector3.new(targetPos.X, math.max(groundY, targetPos.Y), targetPos.Z)
+        local downDistance = math.abs(airTarget.Y - finalTarget.Y)
+        local downDuration = downDistance / (_G.Speed * 0.5) -- ลงช้าๆ
+        local downStartTime = tick()
+        
+        if _G.SlowApproach then
+            -- ลงมาช้าๆ เพื่อป้องกัน Anti-Noclip
+            while tick() - downStartTime < downDuration and _G.AutoFarm do
+                if not isCharacterValid() then 
+                    moving = false
+                    return false 
+                end
+                
+                local progress = (tick() - downStartTime) / downDuration
+                local currentY = airTarget.Y - (downDistance * progress)
+                
+                rootPart.CFrame = CFrame.new(targetPos.X, currentY, targetPos.Z)
+                RunService.Heartbeat:Wait()
+            end
+        else
+            -- ลงเร็ว
+            rootPart.CFrame = CFrame.new(finalTarget)
+        end
+        
+    else
+        -- ไม่มีสิ่งกีดขวาง - เคลื่อนที่ตรงๆ
         local duration = distance / _G.Speed
         local startTime = tick()
         
@@ -81,13 +220,9 @@ local function cframeMove(targetPos)
                 return false 
             end
             
-            local elapsed = tick() - startTime
-            local progress = math.min(elapsed / duration, 1)
-            
-            -- Lerp position
+            local progress = (tick() - startTime) / duration
             local newPos = startPos:Lerp(targetPos, progress)
             
-            -- Create CFrame with look direction
             local lookDirection = (targetPos - newPos).Unit
             if lookDirection.Magnitude > 0 then
                 rootPart.CFrame = CFrame.lookAt(newPos, newPos + lookDirection)
@@ -95,213 +230,10 @@ local function cframeMove(targetPos)
                 rootPart.CFrame = CFrame.new(newPos)
             end
             
-            -- Small wait for smooth movement
             RunService.Heartbeat:Wait()
         end
-    else
-        -- Instant teleport
-        rootPart.CFrame = CFrame.new(targetPos)
     end
     
     moving = false
     return true
 end
-
--- ========================================
--- Main AutoFarm Function
--- ========================================
-
-local function startAutoFarm()
-    notify("AutoFarm", "Started! (CFrame Mode)")
-    
-    -- Stats
-    local startTime = tick()
-    local loops = 0
-    
-    while _G.AutoFarm do
-        -- Check character
-        if not isCharacterValid() then
-            notify("AutoFarm", "Waiting for character...")
-            repeat task.wait(1) until isCharacterValid() or not _G.AutoFarm
-            if not _G.AutoFarm then break end
-        end
-        
-        -- Check targets
-        if not _G.Targets or #_G.Targets == 0 then
-            notify("AutoFarm", "No targets set!")
-            _G.AutoFarm = false
-            break
-        end
-        
-        -- Get next target
-        local target = _G.Targets[currentTargetIndex]
-        
-        -- Move to target
-        local success = cframeMove(target)
-        
-        if success then
-            loops = loops + 1
-            
-            -- Wait at target
-            local waited = 0
-            while waited < _G.WaitTime and _G.AutoFarm do
-                task.wait(0.5)
-                waited = waited + 0.5
-            end
-            
-            -- Next target
-            currentTargetIndex = currentTargetIndex % #_G.Targets + 1
-            
-            -- Show progress occasionally
-            if loops % 10 == 0 and _G.ShowNotifications then
-                local runtime = math.floor((tick() - startTime) / 60)
-                notify("Progress", string.format("Loops: %d | Time: %d min", loops, runtime))
-            end
-        else
-            -- Failed, wait before retry
-            task.wait(2)
-        end
-        
-        task.wait(0.1)
-    end
-    
-    -- Show final stats
-    local runtime = math.floor((tick() - startTime) / 60)
-    notify("AutoFarm Stopped", string.format("Total loops: %d | Runtime: %d min", loops, runtime))
-end
-
--- ========================================
--- Character Respawn Handler
--- ========================================
-
-player.CharacterAdded:Connect(function(newChar)
-    char = newChar
-    rootPart = char:WaitForChild("HumanoidRootPart")
-    humanoid = char:WaitForChild("Humanoid")
-    moving = false
-    
-    -- Resume if was running
-    if _G.AutoFarm then
-        task.wait(2)
-        startAutoFarm()
-    end
-end)
-
--- ========================================
--- Main Control Loop
--- ========================================
-
-task.spawn(function()
-    local wasEnabled = false
-    
-    while true do
-        if _G.AutoFarm and not wasEnabled then
-            -- Just enabled
-            wasEnabled = true
-            task.spawn(startAutoFarm)
-        elseif not _G.AutoFarm and wasEnabled then
-            -- Just disabled
-            wasEnabled = false
-            moving = false
-        end
-        
-        task.wait(0.5)
-    end
-end)
-
--- ========================================
--- Helper Functions
--- ========================================
-
--- เพิ่มตำแหน่งปัจจุบัน
-_G.AddCurrentPosition = function()
-    if isCharacterValid() then
-        table.insert(_G.Targets, rootPart.Position)
-        notify("Target Added", "Total targets: " .. #_G.Targets)
-        return true
-    end
-    return false
-end
-
--- ล้างตำแหน่ง
-_G.ClearTargets = function()
-    _G.Targets = {}
-    currentTargetIndex = 1
-    notify("Targets Cleared", "All targets removed")
-end
-
--- รีเซ็ตไปจุดแรก
-_G.ResetToFirst = function()
-    currentTargetIndex = 1
-    notify("Reset", "Back to first target")
-end
-
--- ดูสถานะ
-_G.GetStatus = function()
-    return {
-        Enabled = _G.AutoFarm,
-        Speed = _G.Speed,
-        Targets = #_G.Targets,
-        CurrentTarget = currentTargetIndex,
-        Moving = moving,
-        SmoothMovement = _G.SmoothMovement
-    }
-end
-
--- Toggle AutoFarm
-_G.Toggle = function()
-    _G.AutoFarm = not _G.AutoFarm
-end
-
--- Quick Teleport to target
-_G.TeleportToTarget = function(index)
-    if _G.Targets[index] and isCharacterValid() then
-        rootPart.CFrame = CFrame.new(_G.Targets[index] + Vector3.new(0, _G.HeightOffset, 0))
-        notify("Teleport", "Teleported to target " .. index)
-        currentTargetIndex = index
-    end
-end
-
--- ========================================
--- Instructions
--- ========================================
-
-print([[
-✅ Perfect AutoFarm CFrame Only - Loaded!
-
-📝 วิธีใช้พื้นฐาน:
-  _G.AutoFarm = true      -- เปิด
-  _G.AutoFarm = false     -- ปิด
-  _G.Toggle()             -- สลับเปิด/ปิด
-  
-⚙️ การตั้งค่า:
-  _G.Speed = 20                -- ความเร็ว (1-50)
-  _G.WaitTime = 5              -- เวลารอที่จุด (วินาที)
-  _G.SmoothMovement = true     -- true = เคลื่อนที่นุ่มนวล, false = teleport
-  _G.HeightOffset = 3          -- ความสูงจากพื้น
-  _G.ShowNotifications = true  -- แสดงการแจ้งเตือน
-  
-📍 จัดการตำแหน่ง:
-  _G.Targets = {Vector3.new(x,y,z), ...}  -- ตั้งตำแหน่ง
-  _G.AddCurrentPosition()                  -- เพิ่มตำแหน่งปัจจุบัน
-  _G.ClearTargets()                        -- ล้างตำแหน่งทั้งหมด
-  _G.ResetToFirst()                        -- กลับไปจุดแรก
-  
-🚀 ฟังก์ชันพิเศษ:
-  _G.TeleportToTarget(1)   -- Teleport ไปยัง Target ที่ระบุ
-  print(_G.GetStatus())    -- ดูสถานะทั้งหมด
-
-💡 ตัวอย่างการใช้งาน:
-  -- Smooth Movement
-  _G.Speed = 25
-  _G.SmoothMovement = true
-  _G.AutoFarm = true
-  
-  -- Instant Teleport
-  _G.SmoothMovement = false
-  _G.WaitTime = 5
-  _G.AutoFarm = true
-]])
-
--- แจ้งเตือนว่าโหลดเสร็จ
-notify("CFrame AutoFarm", "Ready! Use _G.AutoFarm = true")
